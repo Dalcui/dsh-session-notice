@@ -1,0 +1,5 @@
+# dsh-session-notice bundle patch layer —— insert 一行：把本插件挂载进 profile 树。
+# 安装：dsh plugin --profile web add <path-or-git-url>
+- insert:
+    - id: bark-notify
+      name: dsh-session-notice
