@@ -21,6 +21,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 
 import { DEFAULT_SERVER, runConnectivityTest, weakKeyCheck, type BarkConfig } from './bark-service.js'
+import { BODY_CHARS_MAX, BODY_CHARS_MIN } from './constants.js'
 import { maskKey, maskServer, type BarkSettings } from './settings-store.js'
 
 /** 本插件路由前缀（与 client 半 fetch 的路径一致）。 */
@@ -33,7 +34,7 @@ const BODY_LIMIT = 64 * 1024
 export interface BarkRpcDeps {
   getSettings(): BarkSettings
   /** merge 写入（Host 侧；绝不整段替换，防浏览器脱敏视图清空密钥）。 */
-  updateSettings(patch: { server?: string; key?: string; group?: string }): Promise<void>
+  updateSettings(patch: { server?: string; key?: string; group?: string; maxBodyChars?: number }): Promise<void>
   /** 翻转会话开关；返回最新状态与集合。 */
   toggleSession(sessionId: string): Promise<{ enabled: boolean; enabledSessions: string[] }>
   /** 当前工作区（默认 group 来源，可选）。 */
@@ -117,6 +118,7 @@ function handleState(deps: BarkRpcDeps, res: ServerResponse): void {
       keyMasked: mask.masked,
       group: settings.group,
       enabledSessions: settings.enabledSessions,
+      maxBodyChars: settings.maxBodyChars,
     },
   })
 }
@@ -124,7 +126,7 @@ function handleState(deps: BarkRpcDeps, res: ServerResponse): void {
 /** POST /set */
 async function handleSet(deps: BarkRpcDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const patch = await readJson(req)
-  const next: { server?: string; key?: string; group?: string } = {}
+  const next: { server?: string; key?: string; group?: string; maxBodyChars?: number } = {}
   if (patch.server !== undefined) {
     if (typeof patch.server !== 'string') {
       json(res, 400, { ok: false, message: 'set: server 必须是字符串' })
@@ -156,6 +158,19 @@ async function handleSet(deps: BarkRpcDeps, req: IncomingMessage, res: ServerRes
     }
     next.group = patch.group
   }
+  if (patch.maxBodyChars !== undefined) {
+    const raw = patch.maxBodyChars
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+      json(res, 400, { ok: false, message: 'set: maxBodyChars 必须是数字' })
+      return
+    }
+    const rounded = Math.floor(raw)
+    if (rounded < BODY_CHARS_MIN || rounded > BODY_CHARS_MAX) {
+      json(res, 400, { ok: false, message: `set: maxBodyChars 需在 ${BODY_CHARS_MIN}–${BODY_CHARS_MAX} 之间` })
+      return
+    }
+    next.maxBodyChars = rounded
+  }
   if (Object.keys(next).length === 0) {
     json(res, 200, { ok: true, value: { saved: true, noop: true } })
     return
@@ -186,6 +201,7 @@ async function handleTest(deps: BarkRpcDeps, res: ServerResponse): Promise<void>
     key: settings.key,
     group: settings.group,
     cwd: deps.workspaceCwd?.(),
+    maxBodyChars: settings.maxBodyChars,
   }
   json(res, 200, { ok: true, value: await runConnectivityTest(conf) })
 }

@@ -25,6 +25,8 @@ export interface BarkSettings {
     group: string;
     /** 开启「会通知」的会话 id 集合（持久化，服务重启后保持）。 */
     enabledSessions: string[];
+    /** 通知正文展示上限（码点数，默认 200；超出按「首段 + 末段」摘要）。 */
+    maxBodyChars: number;
 }
 /** 组合默认值（全新安装的基线）。 */
 export declare const DEFAULT_SETTINGS: BarkSettings;
@@ -34,11 +36,13 @@ export declare const barkSettingsSchema: z<Schemastery.ObjectS<{
     key: z<string, string>;
     group: z<string, string>;
     enabledSessions: z<string[], string[]>;
+    maxBodyChars: z<number, number>;
 }>, Schemastery.ObjectT<{
     server: z<string, string>;
     key: z<string, string>;
     group: z<string, string>;
     enabledSessions: z<string[], string[]>;
+    maxBodyChars: z<number, number>;
 }>>;
 /** 浏览器可见的脱敏状态。 */
 export interface KeyMask {

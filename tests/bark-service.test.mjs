@@ -57,18 +57,47 @@ test('weakKeyCheck：空 / 含 /?# 空白 拒绝；普通 key 通过（不按 22
   assert.equal(weakKeyCheck('abc123XYZ'), undefined)
 })
 
-test('composePushPayload：字节预算（title≤80B、body 预算 3400B、group 归一化、id 16hex）', () => {
+test('composePushPayload：展示层摘要（默认 200 字）+ 协议层字节闸门 + group/id', () => {
   const intent = { kind: 'completed', title: '✅ 完成', level: 'active', headline: '' }
-  const body = '长'.repeat(5000)
+  const body = '第一段结论。\n\n' + '中'.repeat(5000) + '\n\n最后一段收尾。'
   const { payload, bytes } = composePushPayload(CONF, intent, body, 5000, { sessionId: 's1', turn: 2 })
   assert.ok(payload !== null)
   assert.ok(bytes <= MAX_REQUEST_BYTES, `整包 ${bytes} 超 ${MAX_REQUEST_BYTES}`)
   assert.equal(payload.device_key, 'testkey123')
   assert.equal(payload.id, collapseId('s1', 2))
   assert.ok(byteLength(payload.title) <= 80)
-  assert.ok(byteLength(payload.body) <= 3400)
+  // 展示层：首段 + 末段摘要 ≤ 200 字 + 长度提示
+  assert.ok(payload.body.includes('第一段结论。'), '含首段')
+  assert.ok(payload.body.includes('最后一段收尾。'), '含末段')
+  assert.ok(payload.body.includes('共 5000 字'), '含长度提示')
+  assert.ok(payload.body.length <= 200 + 20, `摘要过长: ${payload.body.length}`)
   assert.equal(payload.group, 'demo') // cwd basename
-  assert.ok(payload.body.includes('见 DSH'))
+  // 不再有 copy 字段（用户拍板：不放全文）
+  assert.equal('copy' in payload, false)
+})
+
+test('composePushPayload：maxBodyChars 可配置（40/1000 边界与钳制）', () => {
+  const intent = { kind: 'completed', title: 't', level: 'active', headline: '' }
+  const body = '中'.repeat(2000)
+  const small = composePushPayload(CONF, intent, body, 2000, { maxBodyChars: 40 })
+  assert.ok(small.payload.body.length <= 40 + 12, `40 档实际 ${small.payload.body.length}`)
+  const large = composePushPayload(CONF, intent, body, 2000, { maxBodyChars: 1000 })
+  assert.ok(large.payload.body.length <= 1000 + 12, `1000 档实际 ${large.payload.body.length}`)
+  // 越界值被钳制到范围内（不抛异常）
+  const clamped = composePushPayload(CONF, intent, body, 2000, { maxBodyChars: 99999 })
+  assert.ok(clamped.payload.body.length <= 1000 + 12)
+})
+
+test('composePushPayload：短正文原样发送（不摘要、不缀长度）', () => {
+  const intent = { kind: 'completed', title: '✅ 完成', level: 'active', headline: '' }
+  const { payload } = composePushPayload(CONF, intent, '短短一句结论', 6, {})
+  assert.equal(payload.body, '短短一句结论')
+})
+
+test('composePushPayload：conf.maxBodyChars 生效（会话配置随行）', () => {
+  const intent = { kind: 'completed', title: 't', level: 'active', headline: '' }
+  const { payload } = composePushPayload({ ...CONF, maxBodyChars: 60 }, intent, '中'.repeat(1000), 1000, {})
+  assert.ok(payload.body.length <= 60 + 12, `实际 ${payload.body.length}`)
 })
 
 test('composePushPayload：group 空且无 cwd → 省略字段（禁止空串）', () => {

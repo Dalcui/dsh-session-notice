@@ -13,10 +13,22 @@
 import { createHash } from 'node:crypto'
 
 import { classifyPing, classifyPush, classifyRegister, type PingVerdict, type PushVerdict, type RegisterVerdict } from './classify.js'
-import { BODY_BUDGET_BYTES, DEFAULT_SERVER, MAX_REQUEST_BYTES, TIMEOUT_MS, TITLE_BUDGET_BYTES, USER_AGENT, type BarkLevel } from './constants.js'
+import {
+  BODY_BUDGET_BYTES,
+  BODY_CHARS_MAX,
+  BODY_CHARS_MIN,
+  DEFAULT_BODY_CHARS,
+  DEFAULT_SERVER,
+  MAX_REQUEST_BYTES,
+  TIMEOUT_MS,
+  TITLE_BUDGET_BYTES,
+  USER_AGENT,
+  type BarkLevel,
+} from './constants.js'
 import { normalizeGroup } from './group.js'
 import type { NotificationIntent } from './intent.js'
-import { bodyTail, byteLength, truncateByBytes } from './truncate.js'
+import { decorateSummary, summarizeBody } from './summarize.js'
+import { byteLength, truncateByBytes } from './truncate.js'
 
 /** 供发送层消费者（event-listener 等）引用的字节常量与类型。 */
 export { BODY_BUDGET_BYTES, DEFAULT_SERVER, MAX_REQUEST_BYTES, TITLE_BUDGET_BYTES }
@@ -32,6 +44,8 @@ export interface BarkConfig {
   group: string
   /** 工作目录（默认 group 来源）。 */
   cwd?: string
+  /** 通知正文展示上限（码点）；缺省用 DEFAULT_BODY_CHARS。 */
+  maxBodyChars?: number
 }
 
 /** 发送层需要的 payload（全部小写字段）。 */
@@ -69,6 +83,8 @@ export interface TransportOptions {
   sessionId?: string
   /** 轮次号（折叠 id 输入之一）。 */
   turn?: number
+  /** 通知正文展示上限（码点）；缺省用 DEFAULT_BODY_CHARS。 */
+  maxBodyChars?: number
 }
 
 /** 归一化服务器基址：trim、去尾斜杠、空则回退官方默认。 */
@@ -139,11 +155,16 @@ export function weakKeyCheck(key: string): string | undefined {
 }
 
 /**
- * 组装一条推送的完整 payload 并做字节预算：
+ * 组装一条推送的完整 payload 并做双层预算：
  * - title 硬截 TITLE_BUDGET_BYTES（不追加省略号）；
- * - body 按码点截断到 BODY_BUDGET_BYTES，超出追加「…（共 N 字，见 DSH）」尾部（计入预算）；
+ * - body **展示层摘要**（方案 C：首段 + 末段，≤ maxBodyChars 码点，超出缀「（共 N 字）」）
+ *   —— iOS 横幅只显示约 4 行，长文全量塞进去既看不全又笨重；
+ * - body **协议层字节闸门**：摘要结果仍按码点截到 BODY_BUDGET_BYTES 内（防 413/PayloadTooLarge）；
  * - group 归一化（≤40B，空则省略字段）；
  * - 整包校验 > MAX_REQUEST_BYTES 视为插件缺陷（调用方拒绝发送）。
+ * @param bodyFull - 完整正文（未摘要）。
+ * @param totalChars - 原文字符数（供长度提示）。
+ * @param opts - 折叠 id / 会话地址 / 展示上限等。
  * @returns payload 与字节数；payload 为 null 表示整包超限。
  */
 export function composePushPayload(
@@ -154,8 +175,15 @@ export function composePushPayload(
   opts: TransportOptions = {},
 ): { payload: BarkPushPayload | null; bytes: number } {
   const title = truncateByBytes(intent.title, TITLE_BUDGET_BYTES, '').text
-  const { tail, rest } = bodyTail(totalChars, BODY_BUDGET_BYTES)
-  const body = truncateByBytes(bodyFull, rest, tail).text
+  // 展示层摘要（首段 + 末段），未知上限时退回默认 200 字。
+  const limitChars = Math.max(
+    BODY_CHARS_MIN,
+    Math.min(BODY_CHARS_MAX, opts.maxBodyChars ?? conf.maxBodyChars ?? DEFAULT_BODY_CHARS),
+  )
+  const summary = summarizeBody(bodyFull, limitChars)
+  const summarized = decorateSummary(summary, totalChars, '会话轮次已结束')
+  // 协议层字节闸门（双保险；摘要通常远小于预算）。
+  const body = truncateByBytes(summarized, BODY_BUDGET_BYTES, '…').text
   const group = normalizeGroup(conf.group, conf.cwd)
   const payload: BarkPushPayload = {
     device_key: conf.key,

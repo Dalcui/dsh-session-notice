@@ -28,6 +28,7 @@ export interface BarkRpcDeps {
         server?: string;
         key?: string;
         group?: string;
+        maxBodyChars?: number;
     }): Promise<void>;
     /** 翻转会话开关；返回最新状态与集合。 */
     toggleSession(sessionId: string): Promise<{

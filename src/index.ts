@@ -57,15 +57,28 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
   const current = (): BarkSettings => scope.get()
   const persist = (patch: object): Promise<void> => scope.update(patch)
 
+  /** 当前工作区 cwd（进程 cwd）——测试推送没有会话上下文，用它作为默认 group 来源。 */
+  const workspaceCwd = (): string | undefined => {
+    const cwd = process.cwd()
+    return cwd.length > 0 ? cwd : undefined
+  }
+
   /** 未配置 key 时返回 null（静默跳过）。 */
   const toConfig = (settings: BarkSettings, cwd?: string) => {
     if (settings.key.trim().length === 0) return null
-    return { server: settings.server, key: settings.key, group: settings.group, cwd }
+    return {
+      server: settings.server,
+      key: settings.key,
+      group: settings.group,
+      cwd,
+      maxBodyChars: settings.maxBodyChars,
+    }
   }
 
   registerBarkRpc(ctx, {
     getSettings: current,
     updateSettings: persist,
+    workspaceCwd,
     toggleSession: async (sessionId) => {
       const settings = current()
       const has = settings.enabledSessions.includes(sessionId)
@@ -82,7 +95,15 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
     getConfig: (session: SessionLike) => toConfig(current(), session.header?.cwd),
     deliver: (payload) => {
       const settings = current()
-      return sendPush({ server: settings.server, key: settings.key, group: settings.group }, payload)
+      return sendPush(
+        {
+          server: settings.server,
+          key: settings.key,
+          group: settings.group,
+          maxBodyChars: settings.maxBodyChars,
+        },
+        payload,
+      )
     },
     logger: ctx.logger,
   })

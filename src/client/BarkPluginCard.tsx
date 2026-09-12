@@ -29,6 +29,7 @@ interface SettingsView {
   keyMasked: string
   group: string
   enabledSessions: string[]
+  maxBodyChars: number
 }
 
 /** `/test` 端点返回的三步结果。 */
@@ -130,6 +131,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
   const [server, setServer] = useState('')
   const [keyDraft, setKeyDraft] = useState('')
   const [group, setGroup] = useState('')
+  const [bodyChars, setBodyChars] = useState('200')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [testing, setTesting] = useState(false)
@@ -148,6 +150,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     setView(value)
     setServer(value.server)
     setGroup(value.group)
+    setBodyChars(String(value.maxBodyChars ?? 200))
     setKeyDraft('')
     setLoadError('')
   }
@@ -158,11 +161,15 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
   }, [])
 
   const saveDraft = async (): Promise<boolean> => {
-    const patch: Record<string, string> = {}
+    const patch: Record<string, string | number> = {}
     // 空 server 也提交：Host 侧会归一为默认官方地址（清空 = 恢复默认）。
     if (server.trim() !== (view?.server ?? '')) patch.server = server
     if (keyDraft.length > 0) patch.key = keyDraft
     if (group !== (view?.group ?? '')) patch.group = group
+    const charsNumber = Number(bodyChars.trim())
+    if (Number.isFinite(charsNumber) && Math.floor(charsNumber) !== (view?.maxBodyChars ?? 200)) {
+      ;(patch as Record<string, string | number>).maxBodyChars = Math.floor(charsNumber)
+    }
     if (Object.keys(patch).length === 0) return true
     const res = await rpc('set', patch)
     if (!res.ok) {
@@ -200,7 +207,11 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     setTestView(res.value as TestView)
   }
 
-  const dirty = server.trim() !== (view?.server ?? '') || keyDraft.length > 0 || group !== (view?.group ?? '')
+  const dirty =
+    server.trim() !== (view?.server ?? '') ||
+    keyDraft.length > 0 ||
+    group !== (view?.group ?? '') ||
+    (Number.isFinite(Number(bodyChars.trim())) && Math.floor(Number(bodyChars.trim())) !== (view?.maxBodyChars ?? 200))
   const cardClass = `dsn-card${open ? ' dsn-cardOpen' : ''}`
 
   return (
@@ -291,6 +302,31 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
               onChange={(event) => setGroup(event.target.value)}
             />
             <p className="dsn-hint">同一分组在手机通知里按项目聚合、支持按分组静音；清空 = 按工作区自动</p>
+          </div>
+
+          <div className="dsn-field">
+            <div className="dsn-fieldHead">
+              <label className="dsn-fieldLabel" htmlFor="dsn-body-chars">
+                正文摘要字数
+              </label>
+              <span className="dsn-badges">
+                <span className="dsn-badge">默认 200</span>
+              </span>
+            </div>
+            <input
+              id="dsn-body-chars"
+              className="dsn-input"
+              type="number"
+              min={40}
+              max={1000}
+              value={bodyChars}
+              placeholder="200"
+              disabled={saving || testing}
+              onChange={(event) => setBodyChars(event.target.value)}
+            />
+            <p className="dsn-hint">
+              通知只显示约 4 行，超出按「首段 + 末段」摘要并标注总字数；范围 40–1000
+            </p>
           </div>
 
           {testView !== null && testView.error === undefined ? (

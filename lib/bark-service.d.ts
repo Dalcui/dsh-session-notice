@@ -25,6 +25,8 @@ export interface BarkConfig {
     group: string;
     /** 工作目录（默认 group 来源）。 */
     cwd?: string;
+    /** 通知正文展示上限（码点）；缺省用 DEFAULT_BODY_CHARS。 */
+    maxBodyChars?: number;
 }
 /** 发送层需要的 payload（全部小写字段）。 */
 export interface BarkPushPayload {
@@ -62,6 +64,8 @@ export interface TransportOptions {
     sessionId?: string;
     /** 轮次号（折叠 id 输入之一）。 */
     turn?: number;
+    /** 通知正文展示上限（码点）；缺省用 DEFAULT_BODY_CHARS。 */
+    maxBodyChars?: number;
 }
 /** 归一化服务器基址：trim、去尾斜杠、空则回退官方默认。 */
 export declare function sanitizeServer(input: string | undefined): string;
@@ -86,11 +90,16 @@ export declare function collapseId(sessionId: string, turn: number): string;
 /** key 弱校验（t3 定稿：非空 + 不含 / ? # 与空白，不按 22 位强校验）。 */
 export declare function weakKeyCheck(key: string): string | undefined;
 /**
- * 组装一条推送的完整 payload 并做字节预算：
+ * 组装一条推送的完整 payload 并做双层预算：
  * - title 硬截 TITLE_BUDGET_BYTES（不追加省略号）；
- * - body 按码点截断到 BODY_BUDGET_BYTES，超出追加「…（共 N 字，见 DSH）」尾部（计入预算）；
+ * - body **展示层摘要**（方案 C：首段 + 末段，≤ maxBodyChars 码点，超出缀「（共 N 字）」）
+ *   —— iOS 横幅只显示约 4 行，长文全量塞进去既看不全又笨重；
+ * - body **协议层字节闸门**：摘要结果仍按码点截到 BODY_BUDGET_BYTES 内（防 413/PayloadTooLarge）；
  * - group 归一化（≤40B，空则省略字段）；
  * - 整包校验 > MAX_REQUEST_BYTES 视为插件缺陷（调用方拒绝发送）。
+ * @param bodyFull - 完整正文（未摘要）。
+ * @param totalChars - 原文字符数（供长度提示）。
+ * @param opts - 折叠 id / 会话地址 / 展示上限等。
  * @returns payload 与字节数；payload 为 null 表示整包超限。
  */
 export declare function composePushPayload(conf: BarkConfig, intent: NotificationIntent, bodyFull: string, totalChars: number, opts?: TransportOptions): {

@@ -11,6 +11,17 @@
 export declare const MAX_REQUEST_BYTES = 3900;
 /** body 预算（字节）：MAX_REQUEST_BYTES − 骨架 410 − title 80 − 省略号 3 ≈ 3400。 */
 export declare const BODY_BUDGET_BYTES = 3400;
+/**
+ * 通知正文的展示上限（码点数），默认 200。
+ *
+ * 注意与 BODY_BUDGET_BYTES 的区别：3400 字节是**协议安全上限**（防 nginx 413 /
+ * APNs PayloadTooLarge），而 iOS 横幅只显示约 4 行（≈80–120 中文字），
+ * 因此展示层单独收敛到本值（可在设置页调整）。超过时按「首段 + 末段」摘要。
+ */
+export declare const DEFAULT_BODY_CHARS = 200;
+/** 正文展示上限的可配置范围（码点数）。 */
+export declare const BODY_CHARS_MIN = 40;
+export declare const BODY_CHARS_MAX = 1000;
 /** title 预算（字节）：不做上限校验、不追加省略号，超出由 iOS lineLimit(1) 截尾。 */
 export declare const TITLE_BUDGET_BYTES = 80;
 /** group 预算（字节）：超出回退 `<basename> · <sha1 前 6>`。 */

@@ -15,7 +15,7 @@
 
 import z from '@deepseek-ai/schemastery'
 
-import { DEFAULT_SERVER } from './constants.js'
+import { BODY_CHARS_MAX, BODY_CHARS_MIN, DEFAULT_BODY_CHARS, DEFAULT_SERVER } from './constants.js'
 
 /** 本插件的 settings namespace（同时是 settings.plugin.item 卡片的 key）。 */
 export const SETTINGS_NAMESPACE = 'bark-notify'
@@ -30,6 +30,8 @@ export interface BarkSettings {
   group: string
   /** 开启「会通知」的会话 id 集合（持久化，服务重启后保持）。 */
   enabledSessions: string[]
+  /** 通知正文展示上限（码点数，默认 200；超出按「首段 + 末段」摘要）。 */
+  maxBodyChars: number
 }
 
 /** 组合默认值（全新安装的基线）。 */
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: BarkSettings = {
   key: '',
   group: '',
   enabledSessions: [],
+  maxBodyChars: DEFAULT_BODY_CHARS,
 }
 
 /** settings schema：`key` 是 secret，`enabledSessions` 持久化会话开关。 */
@@ -46,6 +49,7 @@ export const barkSettingsSchema = z.object({
   key: z.string().role('secret').default(''),
   group: z.string().default(''),
   enabledSessions: z.array(z.string()).default([]),
+  maxBodyChars: z.number().min(BODY_CHARS_MIN).max(BODY_CHARS_MAX).default(DEFAULT_BODY_CHARS),
 })
 
 /** 浏览器可见的脱敏状态。 */
