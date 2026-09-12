@@ -33,10 +33,12 @@ import { barkSettingsSchema, DEFAULT_SETTINGS, SETTINGS_NAMESPACE, type BarkSett
 export const name = 'bark-notify'
 
 /**
- * 硬依赖：settings（持久化）与 connection（RPC）。两者在 web profile 均存在；
+ * 硬依赖：settings（持久化）、connection（RPC）、webServer（connection.rpc.handle
+ * 内部会用调用者 fiber 的 ctx.webServer 注册 HTTP 路由，未声明会抛
+ * "cannot get property webServer without inject"）。三者 web profile 均存在；
  * 缺失的 profile（如 headless）本插件不激活（通知功能本就不适用）。
  */
-export const inject = ['settings', 'connection'] as const
+export const inject = ['settings', 'connection', 'webServer'] as const
 
 /**
  * 插件入口。
