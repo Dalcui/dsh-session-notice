@@ -11,6 +11,40 @@ import type { ReactElement } from 'react'
 
 import type { RpcCall } from './BarkPluginCard'
 
+/**
+ * 铃铛图标（单色线性，`currentColor` 跟随主题，不用彩色 emoji）。
+ * @param enabled - 开启为普通铃铛，关闭为带斜线的静音铃铛。
+ */
+function BellIcon(enabled: boolean): ReactElement {
+  const common = {
+    width: 13,
+    height: 13,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true,
+  }
+  if (enabled) {
+    return (
+      <svg {...common}>
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...common}>
+      <path d="M18 8a6 6 0 0 0-9.3-5.1" />
+      <path d="M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h13" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+      <path d="m2 2 20 20" />
+    </svg>
+  )
+}
+
 export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: string }): ReactElement | null {
   const [enabled, setEnabled] = useState(false)
   const [ready, setReady] = useState(false)
@@ -68,7 +102,7 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
         opacity: busy ? 0.6 : 1,
       }}
     >
-      <span>{enabled ? '🔔' : '🔕'}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center' }}>{BellIcon(enabled)}</span>
       <span>{enabled ? '会通知' : '不通知'}</span>
     </button>
   )

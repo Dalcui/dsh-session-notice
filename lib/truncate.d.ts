@@ -24,13 +24,4 @@ export interface Truncation {
  * @param suffix - 结尾标记，计入预算。
  */
 export declare function truncateByBytes(text: string, maxBytes: number, suffix?: string): Truncation;
-/**
- * 生成 body 尾部提示并计入预算。返回尾部与剩余可用字节数。
- * @param totalChars - 原文总字符数（码点数），仅用于展示。
- * @param budget - 剩余 body 字节预算（不含尾部）。
- */
-export declare function bodyTail(totalChars: number, budget: number): {
-    tail: string;
-    rest: number;
-};
 //# sourceMappingURL=truncate.d.ts.map

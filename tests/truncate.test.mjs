@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { bodyTail, byteLength, truncateByBytes } from '../lib/truncate.js'
+import { byteLength, truncateByBytes } from '../lib/truncate.js'
 
 test('byteLength 按 UTF-8 字节计（中文 3B/字，BMP 符号 3B，非 BMP emoji 4B）', () => {
   assert.equal(byteLength('abc'), 3)
@@ -40,15 +40,4 @@ test('截断结果总字节 ≤ 预算（含省略号）；预算放不下省略
   // 极端：连省略号（3B）都放不下 → 空串，守住字节契约。
   assert.equal(truncateByBytes('abcdef', 2, '…').text, '')
   assert.equal(truncateByBytes('abcdef', 0, '…').text, '')
-})
-
-test('bodyTail 尾部计入预算且返回剩余预算', () => {
-  const { tail, rest } = bodyTail(1000, 3400)
-  assert.ok(tail.includes('共 1000 字'))
-  assert.equal(byteLength(tail) + rest, 3400)
-})
-
-test('bodyTail 预算极小时退化为单省略号', () => {
-  const { tail } = bodyTail(1000, 5)
-  assert.equal(tail, '…')
 })

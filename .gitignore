@@ -1,3 +1,6 @@
 node_modules/
 *.log
 .DS_Store
+
+# AgentTeams 运行态（调研过程的内部状态，不随仓库发布）
+.agent-teams/
