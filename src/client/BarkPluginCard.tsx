@@ -44,6 +44,8 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement | null {
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [testing, setTesting] = useState(false)
   const [testView, setTestView] = useState<(TestView & { error?: string }) | null>(null)
+  // 卡片折叠（与内置插件卡片一致：标题头为按钮，点击展开/收起配置项）。
+  const [open, setOpen] = useState(false)
 
   const load = async (): Promise<void> => {
     const res = await rpc('get', {})
@@ -125,7 +127,38 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement | null {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '8px 0' }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {/* 卡片头：插件名 + 状态摘要 + 折叠按钮（与内置插件卡片一致的交互）。 */}
+      <button
+        type="button"
+        onClick={() => setOpen((previous) => !previous)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          padding: '10px 0',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          font: 'inherit',
+          textAlign: 'left',
+          color: 'var(--dsw-alias-label-primary, inherit)',
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}>
+          Bark 会话通知
+          {view !== null && (
+            <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--dsw-alias-label-secondary, #666)', marginLeft: 8 }}>
+              {view.keyConfigured ? `密钥已配置（${view.keyMasked}）` : '密钥未配置'}
+            </span>
+          )}
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #888)' }}>{open ? '收起 ▴' : '展开 ▾'}</span>
+      </button>
+
+      {open && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '0 0 10px' }}>
       <div>
         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Bark 服务器</div>
         <input
@@ -209,6 +242,8 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement | null {
             <div style={{ color: 'var(--dsw-alias-label-error, #d64545)' }}>{testView.causalHint}</div>
           )}
         </div>
+      )}
+      </div>
       )}
     </div>
   )

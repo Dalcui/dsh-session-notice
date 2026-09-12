@@ -40,23 +40,26 @@ function err(message: string): ConnectionRpcResult<never> {
   return { ok: false, error: { code: 'internal', message, details: {} } }
 }
 
-/** 注册 /bark-notify loopback RPC 通道。 */
+/**
+ * 注册 /bark-notify loopback RPC 通道。
+ * 本机 connection.rpc.handle(channel, handler) 两参签名；直接用 ctx.connection
+ * （静态 inject 硬依赖已在插件入口声明——真机验证回调式 ctx.inject 不触发）。
+ */
 export function registerBarkRpc(ctx: Context, deps: BarkRpcDeps): void {
-  ctx.inject(['connection'], (sctx) => {
-    const handler: ConnectionRpcHandler = async (endpoint, payload, _signal) => {
-      try {
-        switch (endpoint) {
-          case 'get': {
-            const settings = deps.getSettings()
-            const mask = maskKey(settings.key)
-            const serverVisible = maskServer(settings.server)
-            return ok({
-              server: serverVisible,
-              serverMasked: serverVisible !== settings.server,
-              keyConfigured: mask.configured,
-              keyMasked: mask.masked,
-              group: settings.group,
-              enabledSessions: settings.enabledSessions,
+  const handler: ConnectionRpcHandler = async (endpoint, payload, _signal) => {
+    try {
+      switch (endpoint) {
+        case 'get': {
+          const settings = deps.getSettings()
+          const mask = maskKey(settings.key)
+          const serverVisible = maskServer(settings.server)
+          return ok({
+            server: serverVisible,
+            serverMasked: serverVisible !== settings.server,
+            keyConfigured: mask.configured,
+            keyMasked: mask.masked,
+            group: settings.group,
+            enabledSessions: settings.enabledSessions,
             })
           }
           case 'set': {
@@ -102,19 +105,18 @@ export function registerBarkRpc(ctx: Context, deps: BarkRpcDeps): void {
             }
             return ok(await runConnectivityTest(conf))
           }
-          default:
-            return err(`unknown endpoint: ${String(endpoint)}`)
-        }
-      } catch (error) {
-        return err(error instanceof Error ? error.message : String(error))
+        default:
+          return err(`unknown endpoint: ${String(endpoint)}`)
       }
+    } catch (error) {
+      return err(error instanceof Error ? error.message : String(error))
     }
+  }
 
-    sctx.effect(() => {
-      const dispose = sctx.connection.rpc.handle(RPC_CHANNEL, handler)
-      return () => {
-        void dispose()
-      }
-    })
+  ctx.effect(() => {
+    const dispose = ctx.connection.rpc.handle(RPC_CHANNEL, handler)
+    return () => {
+      void dispose()
+    }
   })
 }

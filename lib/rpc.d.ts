@@ -32,6 +32,10 @@ export interface BarkRpcDeps {
     /** 当前工作区（默认 group 来源，可选）。 */
     workspaceCwd?(): string | undefined;
 }
-/** 注册 /bark-notify loopback RPC 通道。 */
+/**
+ * 注册 /bark-notify loopback RPC 通道。
+ * 本机 connection.rpc.handle(channel, handler) 两参签名；直接用 ctx.connection
+ * （静态 inject 硬依赖已在插件入口声明——真机验证回调式 ctx.inject 不触发）。
+ */
 export declare function registerBarkRpc(ctx: Context, deps: BarkRpcDeps): void;
 //# sourceMappingURL=rpc.d.ts.map

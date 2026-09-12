@@ -8,6 +8,10 @@
  *      （Host 侧发送：bark-server 无 CORS，浏览器直连自建必失败）；
  *   3. /bark-notify loopback RPC：设置卡片与会话按钮经此读写（密钥永不过线）。
  *
+ * 注意（真机验证）：本机 0.1.5-rc.1 上回调式 `ctx.inject(['settings'], cb)`
+ * 不触发（参考插件 dsh-notify-bark 的写法在本机失效），必须用静态 inject
+ * 硬依赖 + 直接访问 ctx.settings / ctx.connection。
+ *
  * 浏览器半（./client 入口，esbuild 产物 lib/client.js）注册设置卡片与会话切换按钮。
  * @module dsh-session-notice
  */
@@ -28,8 +32,11 @@ import { barkSettingsSchema, DEFAULT_SETTINGS, SETTINGS_NAMESPACE, type BarkSett
 /** 稳定 cordis 插件名（与 cordis.patch.yml 的 insert id 一致）。 */
 export const name = 'bark-notify'
 
-/** 无硬依赖：settings / connection 均通过 ctx.inject 等待，缺失时其余功能静默降级。 */
-export const inject: string[] = []
+/**
+ * 硬依赖：settings（持久化）与 connection（RPC）。两者在 web profile 均存在；
+ * 缺失的 profile（如 headless）本插件不激活（通知功能本就不适用）。
+ */
+export const inject = ['settings', 'connection'] as const
 
 /**
  * 插件入口。
@@ -39,24 +46,12 @@ export const inject: string[] = []
 export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
   const base: BarkSettings = { ...DEFAULT_SETTINGS, ...config }
 
-  // 已解析设置；settings 服务挂载前使用组合默认值。
-  let current: () => BarkSettings = () => base
-  // 持久化句柄；settings 服务挂载前为 undefined。
-  let persist: ((patch: object) => Promise<void>) | undefined
-
-  ctx.inject(['settings'], (sctx) => {
-    const scope = sctx.settings.register(SETTINGS_NAMESPACE, barkSettingsSchema, {
-      base,
-      applies: 'live',
-    })
-    current = () => scope.get()
-    persist = (patch: object) => scope.update(patch)
-    // settings 服务卸载时回退组合默认值。
-    sctx.effect(() => () => {
-      current = () => base
-      persist = undefined
-    })
+  const scope = ctx.settings.register(SETTINGS_NAMESPACE, barkSettingsSchema, {
+    base,
+    applies: 'live',
   })
+  const current = (): BarkSettings => scope.get()
+  const persist = (patch: object): Promise<void> => scope.update(patch)
 
   /** 未配置 key 时返回 null（静默跳过）。 */
   const toConfig = (settings: BarkSettings, cwd?: string) => {
@@ -65,18 +60,14 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
   }
 
   registerBarkRpc(ctx, {
-    getSettings: () => current(),
-    updateSettings: async (patch) => {
-      if (persist === undefined) throw new Error('设置服务不可用')
-      await persist(patch)
-    },
+    getSettings: current,
+    updateSettings: persist,
     toggleSession: async (sessionId) => {
       const settings = current()
       const has = settings.enabledSessions.includes(sessionId)
       const next = has
         ? settings.enabledSessions.filter((id) => id !== sessionId)
         : [...settings.enabledSessions, sessionId]
-      if (persist === undefined) throw new Error('设置服务不可用')
       await persist({ enabledSessions: next })
       return { enabled: !has, enabledSessions: next }
     },
