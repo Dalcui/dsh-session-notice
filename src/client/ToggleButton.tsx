@@ -58,15 +58,10 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
         height: 28,
         padding: '0 10px',
         borderRadius: 8,
-        border: enabled
-          ? '1px solid var(--dsw-alias-brand-primary, #4d6bfe)'
-          : '1px solid var(--dsw-alias-border-l4, #ccc)',
-        background: enabled
-          ? 'var(--dsw-alias-brand-primary-soft, rgba(77,107,254,0.12))'
-          : 'var(--dsw-alias-bg-layer-3, transparent)',
-        color: enabled
-          ? 'var(--dsw-alias-brand-primary, #4d6bfe)'
-          : 'var(--dsw-alias-label-secondary, #666)',
+        // 与设置卡片同款主题变量（跟随明暗主题）。
+        border: `1px solid ${enabled ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
+        background: enabled ? 'var(--dsw-alias-bg-module-platform)' : 'transparent',
+        color: enabled ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-secondary)',
         fontSize: 12,
         fontWeight: 500,
         cursor: busy ? 'default' : 'pointer',
