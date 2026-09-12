@@ -48,7 +48,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement | null {
   const [open, setOpen] = useState(false)
 
   const load = async (): Promise<void> => {
-    const res = await rpc('get', {})
+    const res = await rpc('state', {})
     if (!res.ok) {
       setLoadError(res.error?.message ?? 'RPC failed')
       return

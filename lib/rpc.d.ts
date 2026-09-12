@@ -1,20 +1,25 @@
 /**
- * dsh-session-notice —— Host 侧 loopback RPC。
+ * dsh-session-notice —— Host 侧 HTTP RPC（/plugins/dsh-session-notice/*）。
  *
- * 浏览器（设置卡片 / 会话按钮）只经此通道读写 Host：
- * - `get`：返回脱敏视图（server 掩码、key 只回末 4 位），完整 key 永不过线；
- * - `set`：写 server/key/group（key 仅在提供新值时写入，空串=显式清除）；
- * - `toggle`：翻转某会话的「会通知」状态（持久化到 settings.enabledSessions）；
- * - `test`：ping → push →（失败才）register 三步连通性测试，只有 push 成功才算「已就绪」。
+ * 为什么不用 `ctx.connection.rpc.handle`（真机验证）：该 API 内部会用
+ * **调用者 fiber** 的 `ctx.webServer.register(...)` 挂 HTTP 路由，在 0.1.5-rc.1
+ * 的 web profile 里即使声明 `inject: ['webServer']` 也会抛
+ * `cannot get property "webServer" without inject`，导致整个 profile 崩溃循环。
+ * 因此改用本机已验证可用的写法（同 dsh-codebuddy-cli）：
+ * `ctx.inject(['webServer'], (webCtx) => webCtx.webServer.register({ kind:'exact', ... }))`
+ * 自建精确路径路由，client 半直接 fetch 这些路径。
  *
- * 本机 dsh-client-connection@0.1.5-rc.1 的 `rpc.handle(channel, handler)` 是两参签名
- * （参考插件 dsh-notify-bark 用的第三参 {authority} 是旧版 API，本机不存在）。
+ * 路由（仅 loopback 可信请求）：
+ *   GET  /plugins/dsh-session-notice/state   → 脱敏设置视图（server 掩码 / key 末 4 位）
+ *   POST /plugins/dsh-session-notice/set     → 写 server/key/group（key 仅新值）
+ *   POST /plugins/dsh-session-notice/toggle  → 翻转某会话「会通知」状态
+ *   POST /plugins/dsh-session-notice/test    → ping → push →（失败才）register 三步连通测试
  * @module dsh-session-notice/rpc
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { type BarkSettings } from './settings-store.js';
-/** 本插件 RPC 通道。 */
-export declare const RPC_CHANNEL = "/bark-notify";
+/** 本插件路由前缀（与 client 半 fetch 的路径一致）。 */
+export declare const ROUTE_PREFIX = "/plugins/dsh-session-notice";
 /** RPC 层依赖（由插件入口绑定 settings 持久化）。 */
 export interface BarkRpcDeps {
     getSettings(): BarkSettings;
@@ -33,9 +38,10 @@ export interface BarkRpcDeps {
     workspaceCwd?(): string | undefined;
 }
 /**
- * 注册 /bark-notify loopback RPC 通道。
- * 本机 connection.rpc.handle(channel, handler) 两参签名；直接用 ctx.connection
- * （静态 inject 硬依赖已在插件入口声明——真机验证回调式 ctx.inject 不触发）。
+ * 注册四个精确路径路由。
+ *
+ * 关键：必须在 `ctx.inject(['webServer'], cb)` 的回调 context 里注册——
+ * 直接用入口 ctx 访问 webServer 会抛 "without inject"。
  */
 export declare function registerBarkRpc(ctx: Context, deps: BarkRpcDeps): void;
 //# sourceMappingURL=rpc.d.ts.map

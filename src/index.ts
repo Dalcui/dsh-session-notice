@@ -17,12 +17,12 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-// Type-only：拉 ctx.connection merge（Host Connection 服务）。
-import type {} from '@deepseek-ai/dsh-client-connection'
 // Type-only：拉 session/event 事件类型。
 import type {} from '@deepseek-ai/dsh-session'
 // Type-only：拉 ctx.settings merge（settings 服务）。
 import type {} from '@deepseek-ai/dsh-settings'
+// Type-only：拉 ctx.webServer merge（在 rpc.ts 的回调注入里使用）。
+import type {} from '@deepseek-ai/dsh-host-webserver'
 
 import { sendPush } from './bark-service.js'
 import { createTurnEndHandler, type SessionLike } from './event-listener.js'
@@ -33,12 +33,14 @@ import { barkSettingsSchema, DEFAULT_SETTINGS, SETTINGS_NAMESPACE, type BarkSett
 export const name = 'bark-notify'
 
 /**
- * 硬依赖：settings（持久化）、connection（RPC）、webServer（connection.rpc.handle
- * 内部会用调用者 fiber 的 ctx.webServer 注册 HTTP 路由，未声明会抛
- * "cannot get property webServer without inject"）。三者 web profile 均存在；
- * 缺失的 profile（如 headless）本插件不激活（通知功能本就不适用）。
+ * 硬依赖：仅 settings（持久化）。
+ *
+ * webServer 不放进静态 inject：真机验证过 `connection.rpc.handle` 会以调用者
+ * fiber 访问 `ctx.webServer` 而抛 "without inject" 并导致 profile 崩溃循环，
+ * 因此本插件改为自建 HTTP 路由，并在 `ctx.inject(['webServer'], cb)` 回调里注册
+ * （见 rpc.ts）。settings 缺失的 profile（如 headless）本插件不激活。
  */
-export const inject = ['settings', 'connection', 'webServer'] as const
+export const inject = ['settings'] as const
 
 /**
  * 插件入口。

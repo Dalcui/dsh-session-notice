@@ -20,7 +20,7 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
     let alive = true
     setReady(false)
     void (async () => {
-      const res = await rpc('get', {})
+      const res = await rpc('state', {})
       if (!alive || !res.ok) return
       const sessions = (res.value?.enabledSessions ?? []) as string[]
       setEnabled(sessions.includes(sessionId))
