@@ -32,7 +32,7 @@ export interface NotificationIntent {
     title: string;
     /** Bark level（服务端零校验，必须枚举化）。 */
     level: BarkLevel;
-    /** body 首行：停止原因摘要（异常时），正常完成时为空串。 */
+    /** body 首行：停止原因（异常时，完整保留不做摘要截断），正常完成时为空串。 */
     headline: string;
 }
 /** 取消原因（aborted.reason）→ 人类可读文案。 */

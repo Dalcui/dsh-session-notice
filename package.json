@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-notice",
   "version": "0.1.0",
-  "description": "DSH 会话 Bark 通知插件：会话头部按钮切换「会通知」状态（持久化，服务重启后保持），回合停止时经 Bark 推送到手机——正常结束推送最后一条文本消息，异常停止推送原因与必要信息。设置-插件配置界面配置 Bark server/key，并提供 ping→push→register 三步连通测试。",
+  "description": "DSH 会话 Bark 通知插件：会话头部按钮切换「会通知」状态（持久化，服务重启后保持），回合停止时经 Bark 推送到手机——正常结束推送最后一条文本消息，异常停止推送完整错误原因与必要信息。设置-插件配置界面配置 Bark server/key，并提供 ping→push→register 三步连通测试。",
   "type": "module",
   "license": "MIT",
   "main": "lib/index.js",

@@ -30,7 +30,7 @@ export interface BarkSettings {
   group: string
   /** 开启「会通知」的会话 id 集合（持久化，服务重启后保持）。 */
   enabledSessions: string[]
-  /** 通知正文展示上限（码点数，默认 200；超出按「首段 + 末段」摘要）。 */
+  /** 通知正文展示上限（码点数，默认 200；仅正常完成时按「首段 + 末段」摘要，异常停止完整推送错误内容）。 */
   maxBodyChars: number
 }
 

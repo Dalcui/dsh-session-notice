@@ -92,13 +92,16 @@ export declare function weakKeyCheck(key: string): string | undefined;
 /**
  * 组装一条推送的完整 payload 并做双层预算：
  * - title 硬截 TITLE_BUDGET_BYTES（不追加省略号）；
- * - body **展示层摘要**（方案 C：首段 + 末段，≤ maxBodyChars 码点，超出缀「（共 N 字）」）
- *   —— iOS 横幅只显示约 4 行，长文全量塞进去既看不全又笨重；
- * - body **协议层字节闸门**：摘要结果仍按码点截到 BODY_BUDGET_BYTES 内（防 413/PayloadTooLarge）；
+ * - body 按停止类型分支：
+ *   · completed（正常完成）→ **展示层摘要**（方案 C：首段 + 末段，≤ maxBodyChars
+ *     码点，超出缀「（共 N 字）」）—— iOS 横幅只显示约 4 行，长文全量塞进去既看不全又笨重；
+ *   · 其余（异常停止）→ **不做展示层摘要**，intent.headline（错误原因）完整保留，
+ *     仅把剩余协议预算让给末尾正文；
+ * - body **协议层字节闸门**：上述结果仍按码点截到 BODY_BUDGET_BYTES 内（防 413/PayloadTooLarge）；
  * - group 归一化（≤40B，空则省略字段）；
  * - 整包校验 > MAX_REQUEST_BYTES 视为插件缺陷（调用方拒绝发送）。
  * @param bodyFull - 完整正文（未摘要）。
- * @param totalChars - 原文字符数（供长度提示）。
+ * @param totalChars - 原文字符数（供长度提示；仅 completed 路径使用）。
  * @param opts - 折叠 id / 会话地址 / 展示上限等。
  * @returns payload 与字节数；payload 为 null 表示整包超限。
  */

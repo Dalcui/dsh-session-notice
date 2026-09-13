@@ -76,6 +76,44 @@ test('composePushPayload：展示层摘要（默认 200 字）+ 协议层字节�
   assert.equal('copy' in payload, false)
 })
 
+test('composePushPayload：异常停止不摘要，错误内容完整（不被展示层 200 字截断）', () => {
+  const headline = '停止原因：' + 'E'.repeat(500) + '，code=boom，status=500'
+  const intent = { kind: 'error', title: '❌ 出错', level: 'timeSensitive', headline }
+  const body = `${headline}\n\n最后输出文本`
+  const { payload } = composePushPayload(CONF, intent, body, [...body].length, {})
+  assert.ok(payload !== null)
+  // 错误内容完整：headline 全长保留，不被 200 字展示层摘要截断。
+  assert.ok(payload.body.length > 500, `错误内容被截断，实际长度 ${payload.body.length}`)
+  assert.ok(payload.body.startsWith(headline))
+  assert.ok(payload.body.endsWith('最后输出文本'), '未超协议预算时正文也应完整')
+  assert.ok(!payload.body.includes('（共'), '异常路径不应追加摘要长度提示')
+})
+
+test('composePushPayload：异常停止超协议预算时错误原因完整、仅截末尾正文', () => {
+  const headline = '停止原因：模型服务 500，code=upstream，status=500'
+  const intent = { kind: 'error', title: '❌ 出错', level: 'timeSensitive', headline }
+  const text = '崩溃前输出日志：' + '中'.repeat(2000) // 正文远超预算，撑爆协议层
+  const body = `${headline}\n\n${text}`
+  const { payload, bytes } = composePushPayload(CONF, intent, body, [...body].length, {})
+  assert.ok(payload !== null)
+  assert.ok(bytes <= MAX_REQUEST_BYTES, `整包 ${bytes} 超 ${MAX_REQUEST_BYTES}`)
+  assert.ok(payload.body.startsWith(headline), '错误原因应完整保留在开头')
+  assert.ok(payload.body.includes('code=upstream') && payload.body.includes('status=500'), 'code/status 应保留')
+  assert.ok(byteLength(payload.body) <= 3400, 'body 守住协议字节闸门')
+  assert.ok(payload.body.endsWith('…'), '正文被截断应缀省略号')
+})
+
+test('composePushPayload：异常停止 headline 自身超预算时不崩溃且守住字节闸门', () => {
+  const headline = '停止原因：' + 'E'.repeat(4000) + '，code=x，status=500'
+  const intent = { kind: 'error', title: '❌ 出错', level: 'timeSensitive', headline }
+  const { payload, bytes } = composePushPayload(CONF, intent, headline, [...headline].length, {})
+  assert.ok(payload !== null)
+  assert.ok(bytes <= MAX_REQUEST_BYTES)
+  assert.ok(byteLength(payload.body) <= 3400)
+  assert.ok(payload.body.startsWith('停止原因：'))
+  assert.ok(payload.body.endsWith('…'))
+})
+
 test('composePushPayload：maxBodyChars 可配置（40/1000 边界与钳制）', () => {
   const intent = { kind: 'completed', title: 't', level: 'active', headline: '' }
   const body = '中'.repeat(2000)
