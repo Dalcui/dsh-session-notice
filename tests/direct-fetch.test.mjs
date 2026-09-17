@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
+import { createServer as createTlsServer, request as tlsRequest } from 'node:https'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { directFetch, networkVerdict, sendPush } from '../lib/bark-service.js'
 
@@ -14,6 +19,46 @@ function localServer(handler) {
       resolve({
         server,
         base: `http://127.0.0.1:${address.port}`,
+        close: () => new Promise((done) => server.close(done)),
+      })
+    })
+  })
+}
+
+/**
+ * 生成一次性自签证书（测试专用，openssl CLI，127.0.0.1 SAN）。
+ * @returns {Promise<{ key: string; cert: string }>}
+ */
+async function selfSignedCert() {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-bark-cert-'))
+  try {
+    const keyFile = join(dir, 'key.pem')
+    const csrFile = join(dir, 'csr.pem')
+    const certFile = join(dir, 'cert.pem')
+    const extFile = join(dir, 'ext.cnf')
+    // 生成私钥
+    execFileSync('openssl', ['genrsa', '-out', keyFile, '2048'], { stdio: 'ignore' })
+    // CSR（OpenSSL 3.6 的 -x509 不允许带 -extfile → 先建 CSR 再用 x509 -req 自签）
+    execFileSync('openssl', ['req', '-new', '-key', keyFile, '-out', csrFile, '-subj', '/CN=localhost'], { stdio: 'ignore' })
+    // 自签证书（SAN 含 IP:127.0.0.1，Node 校验需要 SAN）
+    writeFileSync(extFile, 'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth')
+    execFileSync('openssl', ['x509', '-req', '-in', csrFile, '-signkey', keyFile, '-out', certFile, '-days', '1', '-extfile', extFile], { stdio: 'ignore' })
+    return { key: readFileSync(keyFile, 'utf8'), cert: readFileSync(certFile, 'utf8') }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/** 起一个本地 HTTPS 服务器（自签证书），返回 { server, base, close }。 */
+async function localTlsServer(handler) {
+  const { key, cert } = await selfSignedCert()
+  const server = createTlsServer({ key, cert }, handler)
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      resolve({
+        server,
+        base: `https://127.0.0.1:${address.port}`,
         close: () => new Promise((done) => server.close(done)),
       })
     })
@@ -102,12 +147,6 @@ test('directFetch：path 带查询串与自定义端口正确转发', async () =
   }
 })
 
-import { createServer as createHttpsServer } from 'node:https'
-import { generateKeyPairSync } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 test('directFetch：GET 同源 3xx 跟随（≤3 跳），最终返回 200', async () => {
   let hits = 0
   const { server, base, close } = await localServer((req, res) => {
@@ -168,6 +207,8 @@ test('directFetch：POST /push 3xx 不自动跟随，原样返回（device_key �
 })
 
 test('directFetch：默认传输端到端 —— sendPush 不带 fetchImpl 走 directFetch 成功', async () => {
+  const savedFetchFlag = process.env.BARK_USE_FETCH
+  delete process.env.BARK_USE_FETCH // 隔离：确保走 directFetch 而非回退 global fetch
   const { server, base, close } = await localServer((req, res) => {
     let body = ''
     req.on('data', (c) => { body += c })
@@ -188,6 +229,8 @@ test('directFetch：默认传输端到端 —— sendPush 不带 fetchImpl 走 d
     assert.equal(verdict.ok, true)
     assert.equal(verdict.kind, 'success')
   } finally {
+    if (savedFetchFlag === undefined) delete process.env.BARK_USE_FETCH
+    else process.env.BARK_USE_FETCH = savedFetchFlag
     await close()
   }
 })
@@ -260,4 +303,57 @@ test('directFetch：不支持的 scheme 同步 reject', async () => {
     /只支持 http/,
   )
 })
+
+test('directFetch：HTTPS 直连成功（自签证书，生产主路径 httpsRequest）', async () => {
+  const { server, base, close } = await localTlsServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end('{"code":200,"message":"pong"}')
+  })
+  try {
+    // directFetch 默认校验证书（agent:false 用默认校验配置）—— 自签会失败，
+    // 因此这里用 NODE_TLS_REJECT_UNAUTHORIZED=0 仅在本用例内放行。
+    const saved = process.env.NODE_TLS_REJECT_UNAUTHORIZED
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+    try {
+      const res = await directFetch(base + '/ping', { method: 'GET', headers: {} })
+      assert.equal(res.status, 200)
+      assert.equal(await res.text(), '{"code":200,"message":"pong"}')
+    } finally {
+      if (saved === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
+      else process.env.NODE_TLS_REJECT_UNAUTHORIZED = saved
+    }
+  } finally {
+    await close()
+  }
+})
+
+test('directFetch：HTTPS 未知 CA 证书被拒（默认校验收紧，不静默放行）', async () => {
+  const { server, base, close } = await localTlsServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end('{"code":200,"message":"pong"}')
+  })
+  try {
+    // 不设置 NODE_TLS_REJECT_UNAUTHORIZED（保持默认校验）→ 自签证书应被拒
+    const saved = process.env.NODE_TLS_REJECT_UNAUTHORIZED
+    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
+    try {
+      await assert.rejects(
+        directFetch(base + '/ping', { method: 'GET', headers: {} }),
+        (error) => error instanceof Error && /certificate|self.signed|unable to verify/i.test(String(error.message)),
+      )
+    } finally {
+      if (saved === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
+      else process.env.NODE_TLS_REJECT_UNAUTHORIZED = saved
+    }
+  } finally {
+    await close()
+  }
+})
+
+test('directFetch：畸形 URL 异步 reject（不同步抛）', async () => {
+  let promise
+  assert.doesNotThrow(() => { promise = directFetch('not a url', { method: 'GET', headers: {} }) })
+  await assert.rejects(promise, /无效的请求地址|Invalid URL/i)
+})
+
 

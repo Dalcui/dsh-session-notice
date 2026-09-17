@@ -140,6 +140,9 @@ function directRequest(
           && res.headers.location !== undefined
           && redirects < MAX_REDIRECTS
         ) {
+          // 纵深防御：drain 3xx 响应体期间若 Node 在 res 上发 error，也有兜底
+          // （实测 Node 这类场景走 req error，此处仅为不被 uncaughtException 击穿）。
+          res.on('error', fail)
           res.resume() // 丢到已读流末端，避免 socket 挂起
           let next: URL
           try {
@@ -201,7 +204,13 @@ function directRequest(
  * @param init - 与 FetchImpl 相同的请求参数。
  */
 export function directFetch(url: string | URL, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }): Promise<FetchResponseLike> {
-  const target = new URL(String(url))
+  let target: URL
+  try {
+    target = new URL(String(url))
+  } catch {
+    // 畸形 URL 以异步 reject 呈现（与 Promise 契约一致，而非同步抛错）。
+    return Promise.reject(new TypeError(`directFetch: 无效的请求地址 ${String(url)}`))
+  }
   if (target.protocol !== 'http:' && target.protocol !== 'https:') {
     return Promise.reject(new TypeError(`directFetch: 只支持 http/https，收到 ${target.protocol}`))
   }
