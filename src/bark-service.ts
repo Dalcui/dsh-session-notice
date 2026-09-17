@@ -197,7 +197,7 @@ function directRequest(
  * 兼容 FetchImpl 形状：返回 { status, headers.get, text }，分类逻辑不感知传输。
  * 注意：不做 keep-alive 复用（每次新连接），推送/探测低频，开销可忽略。
  * 已知契约（与全局 fetch 的差异，均为有意设计）：
- * - 仅支持 http/https scheme（其它协议同步 reject）；
+ * - 仅支持 http/https scheme（其它协议异步 reject）；
  * - GET 仅跟随**同源** 3xx（≤3 跳）；POST 不自动跟随，3xx 原样返回；
  * - 响应在正文未读完时断开会立即 reject（而非悬挂到超时）。
  * @param url - 完整请求地址（base 已由 extractBasicAuth 剔除 userinfo）。

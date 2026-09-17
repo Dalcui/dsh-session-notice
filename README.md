@@ -45,6 +45,7 @@ dsh plugin --profile web add github:Dalcui/dsh-session-notice
 - **折叠 id**：`id = sha1(sessionId|turn)` 前 16 位 hex（≤64B ASCII，服务端当 `apns-collapse-id`）；UA 固定 `dsh-bark-notify/<ver>`；超时 8s 且**默认不自动重试**（服务端 3s timeout < APNs 往返，超时=结果不确定）。
 - **失败分类**：网络 / 鉴权（418 纯文本，不按 401 判）/ 体积（413 HTML）/ 密钥错误（`device token`，熔断不重试）/ 上游 5xx / 格式错；403/429 属运维层，不归密钥错。
 - **`/register` 安全红线**：只允许 `GET {server}/register/<key>`，key 为空禁止发请求、永不带 query/body（裸 `/register` 是写接口，会覆盖设备 token）。
+- **直连传输（绕开环境代理劫持）**：发送/探测默认走 `directFetch`（`node:http/https` + `agent:false`，不读取 `HTTP(S)_PROXY` / `NODE_USE_ENV_PROXY`）。原因：Node ≥ 24 在进程环境携带 `NODE_USE_ENV_PROXY=1` 与代理变量（如 launchd plist 注入 Clash Verge 的 `127.0.0.1:7897`）时，全局 `fetch` 会被劫持到代理，代理不可达时推送全部 `fetch failed`、无任何日志。若自建 Bark 服务器必须在代理网络内才可达（罕见），可用环境变量 `BARK_USE_FETCH=1` 显式回退全局 fetch。
 - **HTTP 路由而非 connection.rpc**：`ctx.connection.rpc.handle` 在本机 0.1.5-rc.1 上会用调用者 fiber 访问 `ctx.webServer` 而抛 `cannot get property "webServer" without inject`，导致整个 profile 崩溃循环。因此改用与 `dsh-codebuddy-cli` 相同的写法：`ctx.inject(['webServer'], webCtx => webCtx.webServer.register({ kind: 'exact', path: '/plugins/dsh-session-notice/*' }))`，客户端直接 `fetch`。
 - **卡片样式**：`dsh-client-ui-settings-plugins` 不导出 `PluginCard`（跨插件值导入被纯度门禁禁止），故自写 CSS 复刻原生观感（`--dsw-alias-*` 主题变量、12px 圆角、34px 输入框、15/13 字号）。
 - **group 归一化**：trim + 去控制字符 + ≤40 字节；归一后为空则**省略字段**（`group:""` 会形成空名分组），超限回退 `<basename> · <sha1(cwd) 前 6>`。

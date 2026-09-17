@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { createServer as createTlsServer, request as tlsRequest } from 'node:https'
+import { createServer as createTlsServer } from 'node:https'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
