@@ -1,5 +1,5 @@
 /**
- * dsh-session-notice —— Bark 发送层（Host 侧专用；fetch 可注入以便测试）。
+ * dsh-session-notice —— Bark 发送层（Host 侧专用；传输可注入以便测试）。
  *
  * 协议定稿（t3/t4 实测）：
  * - 唯一发送路径 `POST {server}/push` + JSON，key 在 body 的 `device_key`（字段名小写）；
@@ -7,6 +7,15 @@
  * - UA 固定 USER_AGENT；超时 8s；超时=结果不确定，默认不自动重试；
  * - 探测 `/ping`、`/register/<key>`（key 空禁止发请求；只拼 encodeURIComponent(key)；
  *   永不带 query/body —— 裸 /register 是写接口，会覆盖设备 token）。
+ *
+ * 默认传输 = `directFetch`（node:http/https + `agent: false`），**刻意不用全局
+ * `globalThis.fetch`**：
+ * - Node ≥ 24 在环境变量 `NODE_USE_ENV_PROXY=1` + `HTTP(S)_PROXY` 时会把全局
+ *   fetch（undici）劫持到代理（实测：代理不可达时 `fetch failed`，Bark 推送全部
+ *   静默失败且无任何日志）；`http.request({ agent: false })` 不读环境代理，
+ *   不受其影响；
+ * - 自建 Bark 服务器同样只走直连，不依赖用户的代理/网络拓扑。
+ * 单测/集成仍可注入 `fetchImpl` 假件（shape 与全局 fetch 一致）。
  * @module dsh-session-notice/bark-service
  */
 import { type PingVerdict, type PushVerdict, type RegisterVerdict } from './classify.js';
@@ -53,6 +62,27 @@ export type FetchImpl = (url: string | URL, init: {
     body?: string;
     signal?: AbortSignal;
 }) => Promise<FetchResponseLike>;
+/**
+ * 默认传输：node:http(s)/https 直连，`agent: false`。
+ *
+ * 为什么不用 `globalThis.fetch`（Node ≥ 24 实测）：当进程环境带
+ * `NODE_USE_ENV_PROXY=1` 与 `HTTP(S)_PROXY`（如本机 launchd plist 注入
+ * Clash Verge 的 127.0.0.1:7897）时，全局 fetch（undici）会被劫持到代理；
+ * 代理不可达/无法完成 TLS 时返回 `fetch failed`，Bark 推送静默失败、设置页
+ * 三步测试报「不可达：fetch failed」。`http.request({ agent: false })` 建立
+ * 独立直连连接、不读取环境代理，行为与用户实测可用的 `curl --noproxy` 一致。
+ *
+ * 兼容 FetchImpl 形状：返回 { status, headers.get, text }，分类逻辑不感知传输。
+ * 注意：不做 keep-alive 复用（每次新连接），推送/探测低频，开销可忽略。
+ * @param url - 完整请求地址（base 已由 extractBasicAuth 剔除 userinfo）。
+ * @param init - 与 FetchImpl 相同的请求参数。
+ */
+export declare function directFetch(url: string | URL, init: {
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+}): Promise<FetchResponseLike>;
 /** 发送/探测的可注入选项。 */
 export interface TransportOptions {
     fetchImpl?: FetchImpl;
