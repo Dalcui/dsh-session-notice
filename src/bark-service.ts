@@ -83,6 +83,104 @@ export type FetchImpl = (
   init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal },
 ) => Promise<FetchResponseLike>
 
+/** 3xx 中可安全跟随的状态码（含 Location 的跳转）。 */
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+/** GET 探测可跟随的最大跳数（防重定向环/恶意链，锁定在极小值）。 */
+const MAX_REDIRECTS = 3
+
+/** 判断重定向目标是否与当前请求同源（协议+主机+端口），防凭据泄漏。 */
+function isSameOrigin(a: URL, b: URL): boolean {
+  return a.protocol === b.protocol && a.hostname === b.hostname && a.port === b.port
+}
+
+/** 递归实现一次直连请求（GET 同源 3xx 仅跟随，限跳；POST 原样返回给分类层）。 */
+function directRequest(
+  target: URL,
+  init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal },
+  redirects: number,
+): Promise<FetchResponseLike> {
+  const request = target.protocol === 'https:' ? httpsRequest : httpRequest
+  // IPv6 字面量：new URL('http://[::1]:8080/').hostname === '[::1]'（含方括号，
+  // 直接透传给 options.hostname 会 ENOTFOUND），这里剥掉。
+  const hostname = target.hostname.startsWith('[') ? target.hostname.slice(1, -1) : target.hostname
+  const headers: Record<string, string> = { ...init.headers }
+  if (init.body !== undefined && headers['content-length'] === undefined) {
+    // 显式 Content-Length：避免 node:http 走 chunked，个别严格反代拒绝，
+    // 且与 3900B 请求体预算的字节口径一致。
+    headers['content-length'] = String(Buffer.byteLength(init.body))
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const fail = (error: unknown): void => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
+    const req = request(
+      {
+        protocol: target.protocol,
+        hostname,
+        port: target.port || (target.protocol === 'https:' ? 443 : 80),
+        path: `${target.pathname}${target.search}`,
+        method: init.method,
+        headers,
+        // 关键：独立直连连接，不读 HTTP(S)_PROXY / NODE_USE_ENV_PROXY。
+        agent: false,
+        signal: init.signal,
+      },
+      (res: IncomingMessage) => {
+        // GET 探测跟随同源 3xx（限跳）；跨源不跟随（避免 Authorization 头
+        // 泄漏到异源）。POST /push 一律不自动跟随：device_key 不应被重放到
+        // 其它地址，3xx 原样返回交给 classify 决策。
+        if (
+          init.method === 'GET'
+          && res.statusCode !== undefined
+          && REDIRECT_STATUSES.has(res.statusCode)
+          && res.headers.location !== undefined
+          && redirects < MAX_REDIRECTS
+        ) {
+          res.resume() // 丢到已读流末端，避免 socket 挂起
+          let next: URL
+          try {
+            next = new URL(res.headers.location, target)
+          } catch {
+            fail(new TypeError(`directFetch: 无效的重定向地址 ${String(res.headers.location)}`))
+            return
+          }
+          if (isSameOrigin(target, next)) {
+            void directRequest(next, init, redirects + 1).then(resolve, fail)
+            return
+          }
+          // 跨源：降级为「原样返回 3xx」，让分类层/用户看到真实状态。
+        }
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('error', fail)
+        // 响应头已到但正文未读完连接被对端中止（RST/close）：立即拒绝，
+        // 不再悬挂等到 8s 超时或误报为「请求超时」。
+        res.on('aborted', () => fail(new Error('directFetch: 响应被对端中止（aborted）')))
+        res.on('close', () => {
+          if (!settled) fail(new Error('directFetch: 响应在正文未读完时关闭'))
+        })
+        res.on('end', () => {
+          if (settled) return
+          settled = true
+          const text = Buffer.concat(chunks).toString('utf8')
+          resolve({
+            status: res.statusCode ?? 0,
+            headers: { get: (name: string): string | null => { const value = res.headers[name.toLowerCase()]; return Array.isArray(value) ? value[0] ?? null : value ?? null } },
+            text: async () => text,
+          })
+        })
+      },
+    )
+    req.on('error', fail)
+    if (init.body !== undefined) req.write(init.body)
+    req.end()
+  })
+}
+
 /**
  * 默认传输：node:http(s)/https 直连，`agent: false`。
  *
@@ -95,42 +193,28 @@ export type FetchImpl = (
  *
  * 兼容 FetchImpl 形状：返回 { status, headers.get, text }，分类逻辑不感知传输。
  * 注意：不做 keep-alive 复用（每次新连接），推送/探测低频，开销可忽略。
+ * 已知契约（与全局 fetch 的差异，均为有意设计）：
+ * - 仅支持 http/https scheme（其它协议同步 reject）；
+ * - GET 仅跟随**同源** 3xx（≤3 跳）；POST 不自动跟随，3xx 原样返回；
+ * - 响应在正文未读完时断开会立即 reject（而非悬挂到超时）。
  * @param url - 完整请求地址（base 已由 extractBasicAuth 剔除 userinfo）。
  * @param init - 与 FetchImpl 相同的请求参数。
  */
 export function directFetch(url: string | URL, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }): Promise<FetchResponseLike> {
   const target = new URL(String(url))
-  const request = target.protocol === 'https:' ? httpsRequest : httpRequest
-  return new Promise((resolve, reject) => {
-    const req = request(
-      {
-        protocol: target.protocol,
-        hostname: target.hostname,
-        port: target.port || (target.protocol === 'https:' ? 443 : 80),
-        path: `${target.pathname}${target.search}`,
-        method: init.method,
-        headers: init.headers,
-        // 关键：独立直连连接，不读 HTTP(S)_PROXY / NODE_USE_ENV_PROXY。
-        agent: false,
-        signal: init.signal,
-      },
-      (res: IncomingMessage) => {
-        const chunks: Buffer[] = []
-        res.on('data', (chunk: Buffer) => chunks.push(chunk))
-        res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8')
-          resolve({
-            status: res.statusCode ?? 0,
-            headers: { get: (name: string): string | null => { const value = res.headers[name.toLowerCase()]; return Array.isArray(value) ? value[0] ?? null : value ?? null } },
-            text: async () => text,
-          })
-        })
-      },
-    )
-    req.on('error', reject)
-    if (init.body !== undefined) req.write(init.body)
-    req.end()
-  })
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    return Promise.reject(new TypeError(`directFetch: 只支持 http/https，收到 ${target.protocol}`))
+  }
+  return directRequest(target, init, 0)
+}
+
+/**
+ * 选择默认传输：默认 directFetch（直连、免疫环境代理劫持）；
+ * 极端环境（内网 Bark 必须走代理才可达）可用 `BARK_USE_FETCH=1` 显式回退全局 fetch。
+ */
+export function defaultFetchImpl(): FetchImpl {
+  if (process.env.BARK_USE_FETCH === '1') return globalThis.fetch as unknown as FetchImpl
+  return directFetch
 }
 
 /** 发送/探测的可注入选项。 */
@@ -315,7 +399,7 @@ export async function sendPush(
   payload: BarkPushPayload,
   opts: TransportOptions = {},
 ): Promise<PushVerdict> {
-  const fetchImpl = opts.fetchImpl ?? directFetch
+  const fetchImpl = opts.fetchImpl ?? defaultFetchImpl()
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS
   const userAgent = opts.userAgent ?? USER_AGENT
   const { base, authHeader } = extractBasicAuth(conf.server)
@@ -338,7 +422,7 @@ export async function sendPush(
 
 /** GET {server}/ping 探测。 */
 export async function probePing(server: string, opts: TransportOptions = {}): Promise<PingVerdict> {
-  const fetchImpl = opts.fetchImpl ?? directFetch
+  const fetchImpl = opts.fetchImpl ?? defaultFetchImpl()
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS
   const userAgent = opts.userAgent ?? USER_AGENT
   const { base, authHeader } = extractBasicAuth(server)
@@ -368,7 +452,7 @@ export async function probeRegister(server: string, key: string, opts: Transport
   if (invalid !== undefined) {
     return { ok: false, kind: 'empty-key', message: invalid }
   }
-  const fetchImpl = opts.fetchImpl ?? directFetch
+  const fetchImpl = opts.fetchImpl ?? defaultFetchImpl()
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS
   const userAgent = opts.userAgent ?? USER_AGENT
   const { base, authHeader } = extractBasicAuth(server)
