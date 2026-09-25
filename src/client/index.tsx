@@ -4,8 +4,10 @@
  * 注册两处 UI，数据全部走 Host 自建的 loopback HTTP 路由
  * （/plugins/dsh-session-notice/*，见 Host 半 rpc.ts；不再用 connection.rpc，
  * 因为该 API 在 0.1.5-rc.1 web profile 上会因 webServer 注入时序崩溃）。
- *  1. `settings.plugin.item`（key = settings namespace 'bark-notify'）——
- *     设置-插件配置区里本插件的配置卡片（server/key/group + 三步连通测试）；
+ *  1. `plugins.bundle.config`（key = npm 包名 'dsh-session-notice'）——
+ *     插件管理页本 bundle 详情页里的配置区（server/key/group + 三步连通测试）。
+ *     dsh-settings 0.1.7 移除了 `settings.plugin.item`，插件配置入口统一改为
+ *     插件管理页的 bundle/row 配置 slot；
  *  2. `conversation.session.header.utilities`（id 'bark-notify-toggle'）——
  *     会话头部常驻切换按钮，绑定当前会话（standardProps 提供 sessionId）。
  * @module dsh-session-notice/client
@@ -43,12 +45,12 @@ export function apply(ctx: Context): void {
     }
   }
 
-  // 设置-插件配置卡片：key = settings namespace。
-  ctx.slots.inject('settings.plugin.item', () =>
+  // 插件管理页本 bundle 的配置区：key = npm 包名（与 Host 侧 entry id 无关）。
+  ctx.slots.inject('plugins.bundle.config', () =>
     ctx.slots.register(
       {
-        name: 'settings.plugin.item',
-        key: 'bark-notify',
+        name: 'plugins.bundle.config',
+        key: 'dsh-session-notice',
         inject: () => ({ rpc }),
       },
       BarkPluginCard,

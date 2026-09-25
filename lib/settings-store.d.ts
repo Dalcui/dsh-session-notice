@@ -1,19 +1,19 @@
 /**
  * dsh-session-notice —— 设置模型：schema、默认值、脱敏视图。
  *
- * namespace 注册在 Host 侧 `ctx.settings`（值持久化到 settings 存储、live 生效）。
- * 注意（t4 本机验证）：dsh-settings@0.1.5-rc.1 **没有** `settingsNamespace()` 导出，
- * register 的 ns 直接传小写连字符字面量即可（运行时只校验该正则）。
+ * 持久化（dsh-settings@0.1.7-rc.2 重构后的契约）：
+ * - 本 schema 作为插件的 `Config` 导出（见 index.ts），Loader 把它挂进 profile
+ *   patch；**volatile 字段**即「live 可编辑、写入 profile patch、重启后保持」；
+ * - Host 侧读写走 `ctx.settings.describe()/update()`，entry id = 本 namespace；
+ * - `key` 标 `role('secret')`：wire 描述自动脱敏，浏览器只回显「末 4 位」，
+ *   日志只打 configured:true/false；写 key 走 merge/patch，绝不整段覆盖。
  *
- * 密钥安全共识（三家现有插件独立收敛）：
- * - `key` 标 `role('secret')`，wire 上的 describe 自动脱敏；
- * - 浏览器只回显「•••••••• + 末 4 位」，日志只打 configured:true/false；
- * - 写密钥走 merge/patch（`update`/`mutate`），绝不用 `replace` 整段覆盖——
- *   浏览器只持脱敏视图，整段覆盖会把脱敏值写回、清空真密钥。
+ * 旧版（≤0.1.5）的 `settings.register(ns, schema, { base, applies })` 在 0.1.7
+ * 已移除，register 的职责改由「Config 导出 + volatile 字段」承接。
  * @module dsh-session-notice/settings-store
  */
 import z from '@deepseek-ai/schemastery';
-/** 本插件的 settings namespace（同时是 settings.plugin.item 卡片的 key）。 */
+/** 本插件的 settings namespace / profile patch entry id（与 cordis.patch.yml 的 insert id 一致）。 */
 export declare const SETTINGS_NAMESPACE = "bark-notify";
 /** 设置模型。 */
 export interface BarkSettings {
@@ -30,20 +30,23 @@ export interface BarkSettings {
 }
 /** 组合默认值（全新安装的基线）。 */
 export declare const DEFAULT_SETTINGS: BarkSettings;
-/** settings schema：`key` 是 secret，`enabledSessions` 持久化会话开关。 */
-export declare const barkSettingsSchema: z<Schemastery.ObjectS<{
-    server: z<string, string>;
-    key: z<string, string>;
-    group: z<string, string>;
-    enabledSessions: z<string[], string[]>;
-    maxBodyChars: z<number, number>;
-}>, Schemastery.ObjectT<{
-    server: z<string, string>;
-    key: z<string, string>;
-    group: z<string, string>;
-    enabledSessions: z<string[], string[]>;
-    maxBodyChars: z<number, number>;
-}>>;
+/** settings schema：`key` 是 secret，`enabledSessions` 持久化会话开关。
+ * 全部字段标 `volatile()` —— dsh-settings 0.1.7 只允许 volatile 路径写入
+ * （`update`/`mutate` 会校验 `isVolatilePath`），且自动生成的设置表单
+ * 只展示 volatile 字段。 */
+export declare const barkSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
+    server: z<string, string, "volatile-defined">;
+    key: z<string, string, "volatile-defined">;
+    group: z<string, string, "volatile-defined">;
+    enabledSessions: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    maxBodyChars: z<number, number, "volatile-defined">;
+}>>, Schemastery.ObjectT<NoInfer<{
+    server: z<string, string, "volatile-defined">;
+    key: z<string, string, "volatile-defined">;
+    group: z<string, string, "volatile-defined">;
+    enabledSessions: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    maxBodyChars: z<number, number, "volatile-defined">;
+}>>, "plain">;
 /** 浏览器可见的脱敏状态。 */
 export interface KeyMask {
     /** 是否已配置密钥。 */

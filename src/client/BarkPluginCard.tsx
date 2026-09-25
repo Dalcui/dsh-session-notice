@@ -1,5 +1,10 @@
 /**
- * dsh-session-notice —— 设置-插件配置卡片（settings.plugin.item, key='bark-notify'）。
+ * dsh-session-notice —— 插件配置卡片（plugins.bundle.config, key='dsh-session-notice'）。
+ *
+ * dsh-settings 0.1.7 移除了 `settings.plugin.item`，插件配置页面统一从插件管理页
+ * 的 bundle 配置区进入（`plugins.bundle.config`，owner 仅以 `view: 'page'` 渲染，
+ * 无 summary 分支）。本组件仍走 Host 自建
+ * loopback RPC（/plugins/dsh-session-notice/*），不使用 owner 传入的 form 通道。
  *
  * 样式与 DSH 内置及其它插件卡片保持一致：`li` 卡片 + `--dsw-alias-*` 主题变量
  * （border-l2 / bg-layer-3 / brand-primary / label-* ），header 折叠 + body 字段
@@ -125,6 +130,10 @@ function ChevronIcon(open: boolean): ReactElement {
   )
 }
 
+/**
+ * 插件配置页（plugins.bundle.config 的 page 视图；owner 仅以 page 渲染）。
+ * 数据全部走 Host loopback RPC，不使用 owner 传入的 form 通道。
+ */
 export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
   const [view, setView] = useState<SettingsView | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -148,7 +157,9 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     }
     const value = res.value as SettingsView
     setView(value)
-    setServer(value.server)
+    // server 带 Basic Auth 凭据时 /state 返回的是脱敏值：不预填，
+    // 留空 = 保持现有服务器与凭据（与 key 的「留空不修改」语义一致）。
+    setServer(value.serverMasked === true ? '' : value.server)
     setGroup(value.group)
     setBodyChars(String(value.maxBodyChars ?? 200))
     setKeyDraft('')
@@ -162,8 +173,14 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
 
   const saveDraft = async (): Promise<boolean> => {
     const patch: Record<string, string | number> = {}
-    // 空 server 也提交：Host 侧会归一为默认官方地址（清空 = 恢复默认）。
-    if (server.trim() !== (view?.server ?? '')) patch.server = server
+    if (view?.serverMasked === true) {
+      // 服务器带凭据：输入框留空 = 保持现有；输入新值 = 整串替换（凭据含在其中，
+      // 不允许用脱敏值回写，防 user:pass 凭据被清空）。
+      if (server.trim().length > 0) patch.server = server
+    } else if (server.trim() !== (view?.server ?? '')) {
+      // 空 server 也提交：Host 侧会归一为默认官方地址（清空 = 恢复默认）。
+      patch.server = server
+    }
     if (keyDraft.length > 0) patch.key = keyDraft
     if (group !== (view?.group ?? '')) patch.group = group
     const charsNumber = Number(bodyChars.trim())
@@ -207,8 +224,10 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     setTestView(res.value as TestView)
   }
 
+  const serverDirty =
+    view?.serverMasked === true ? server.trim().length > 0 : server.trim() !== (view?.server ?? '')
   const dirty =
-    server.trim() !== (view?.server ?? '') ||
+    serverDirty ||
     keyDraft.length > 0 ||
     group !== (view?.group ?? '') ||
     (Number.isFinite(Number(bodyChars.trim())) && Math.floor(Number(bodyChars.trim())) !== (view?.maxBodyChars ?? 200))
@@ -253,7 +272,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
               className="dsn-input"
               type="text"
               value={server}
-              placeholder="https://api.day.app"
+              placeholder={view?.serverMasked === true ? '留空 = 保持现有服务器与凭据' : 'https://api.day.app'}
               disabled={saving || testing}
               onChange={(event) => setServer(event.target.value)}
             />
