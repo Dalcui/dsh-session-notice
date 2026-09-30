@@ -68,6 +68,23 @@ test('handler：非 turn/end 事件忽略；未知 reason.kind 忽略', () => {
   assert.equal(delivered.length, 0)
 })
 
+test('handler：用户主动中止（aborted+user 及 parent 级联）→ 不投递；hook 中止 → 投递', async () => {
+  const delivered = []
+  const handler = createTurnEndHandler({
+    isEnabled: () => true,
+    getConfig: () => ({ server: 'https://api.day.app', key: 'k', group: '' }),
+    deliver: async (payload) => { delivered.push(payload); return { ok: true, kind: 'success' } },
+  })
+  const session = fakeSession([assistantEvent('被打断的半句话')])
+  handler(session, turnEndEvent('aborted', { reason: { kind: 'user' } }))
+  handler(session, turnEndEvent('aborted', { reason: { kind: 'parent' } }))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(delivered.length, 0)
+  handler(session, { type: 'turn/end', seq: 9, data: { turn: 9, reason: { kind: 'aborted', reason: { kind: 'hook', reason: '预算耗尽' } } } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(delivered.length, 1)
+  assert.ok(delivered[0].body.includes('预算耗尽'))
+})
 test('handler：正常完成 → 推送最后文本（title/level/body 正确）', async () => {
   const delivered = []
   const handler = createTurnEndHandler({

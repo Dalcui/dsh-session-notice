@@ -1,7 +1,7 @@
 /**
  * dsh-session-notice —— 设置模型：schema、默认值、脱敏视图。
  *
- * 持久化（dsh-settings@0.1.7-rc.2 重构后的契约）：
+ * 持久化（dsh-settings@0.1.7 引入、0.2.0-rc.2 复核未变的契约）：
  * - 本 schema 作为插件的 `Config` 导出（见 index.ts），Loader 把它挂进 profile
  *   patch；**volatile 字段**即「live 可编辑、写入 profile patch、重启后保持」；
  * - Host 侧读写走 `ctx.settings.describe()/update()`，entry id = 本 namespace；

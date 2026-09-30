@@ -24,12 +24,27 @@ test('error 缺字段时兜底文案不抛异常', () => {
   assert.ok(intent?.headline.includes('任务执行出错'))
 })
 
-test('aborted → 取消原因文案（user/parent/hook/disposed）', () => {
-  assert.ok(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'user' } })?.headline.includes('用户中止'))
-  assert.ok(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'parent' } })?.headline.includes('父级'))
-  assert.ok(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'hook', reason: '权限不足' } })?.headline.includes('权限不足'))
-  assert.ok(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'disposed' } })?.headline.includes('销毁'))
+test('aborted 用户主动中止链（user/parent/disposed/legacy/缺 cause）→ null 静默', () => {
+  assert.equal(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'user' } }), null)
+  assert.equal(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'parent' } }), null)
+  assert.equal(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'disposed' } }), null)
+  assert.equal(intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'legacy' } }), null)
+  // 旧版本不记 cause：语义等同用户停止，同样静默
+  assert.equal(intentOfTurnEnd({ kind: 'aborted' }), null)
+})
+
+test('aborted hook / 未知扩展 cause → 仍推送（带原因文案）', () => {
+  const hook = intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'hook', reason: '权限不足' } })
+  assert.ok(hook !== null)
+  assert.ok(hook.headline.includes('权限不足'))
+  assert.equal(hook.title, '⏹ 已中止')
+  const custom = intentOfTurnEnd({ kind: 'aborted', reason: { kind: 'custom-ext' } })
+  assert.ok(custom !== null)
+})
+
+test('abortedCauseText 兜底文案保留（hook 之外仍可独立使用）', () => {
   assert.equal(abortedCauseText({ kind: 'legacy' }), '会话被中止')
+  assert.equal(abortedCauseText(undefined), '用户中止了会话')
 })
 
 test('blocked / max-tokens / interrupted → 对应标题与 level', () => {

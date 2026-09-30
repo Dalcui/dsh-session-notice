@@ -4,6 +4,11 @@
  * 输入是与 dsh-session 的 TurnEndReasonMap 结构兼容的最小形状（不 import DSH
  * 包，测试环境无 node_modules 也能跑）。六种 reason 全部区分：
  * completed / aborted / blocked / error / max-tokens / interrupted。
+ * 例外：**用户主动中止链**（aborted 且 cause 为 user/parent/disposed，含 cause
+ * 缺失的历史事件）返回 null 保持沉默 —— 停止是用户自己按的，通知只会打扰；
+ * 主会话被停时其 subagent 收到的是 parent 级联中止，同样静默（防一次点击多条
+ * 轰炸）。dsh 0.2.0 的 cancel cause 联合类型收敛为 user/parent/disposed/hook
+ * （0.1.x 的 legacy 在 0.2.0 已不存在；仍保留识别以防旧日志回放）。
  * @module dsh-session-notice/intent
  */
 
@@ -37,13 +42,13 @@ export interface NotificationIntent {
 const META: Record<TurnEndKind, { title: string; level: BarkLevel }> = {
   completed: { title: '✅ 完成', level: 'active' },
   error: { title: '❌ 出错', level: 'timeSensitive' },
-  aborted: { title: '⏹ 已中止', level: 'passive' },
+  aborted: { title: '⏹ 已中止', level: 'passive' }, // 仅 hook 中止仍推送（自动化策略终止，有信息量）
   blocked: { title: '🚫 被阻塞', level: 'timeSensitive' },
   'max-tokens': { title: '⚠️ Token 上限', level: 'timeSensitive' },
   interrupted: { title: '⏸ 中断', level: 'timeSensitive' },
 }
 
-/** 取消原因（aborted.reason）→ 人类可读文案。 */
+/** 取消原因（aborted.reason）→ 人类可读文案（用户主动中止链在 intentOfTurnEnd 已被过滤；此处保留 hook 等兜底文案）。 */
 export function abortedCauseText(cause?: { kind?: string; reason?: string }): string {
   if (cause === undefined) return '用户中止了会话'
   switch (cause.kind) {
@@ -63,12 +68,20 @@ export function abortedCauseText(cause?: { kind?: string; reason?: string }): st
 /**
  * 把一个 turn/end 的 reason 映射为通知意图。
  * @param reason - TurnEndReasonLike（event.data.reason）。
- * @returns 意图；kind 不是六种官方值时返回 null（插件扩展的 reason 保持沉默）。
+ * @returns 意图；kind 不是六种官方值、或 aborted 属用户主动中止链时返回 null（保持沉默）。
  */
 export function intentOfTurnEnd(reason: TurnEndReasonLike): NotificationIntent | null {
   const kind = reason.kind as TurnEndKind | undefined
   const meta = kind === undefined ? undefined : META[kind]
   if (meta === undefined) return null
+  // 用户主动中止链 → 沉默：user 是自己按的停止；parent 是其级联到 subagent 的
+  // 同一意图；disposed 是会话销毁；cause 缺失（旧版本不记 cause）语义等同用户
+  // 停止。aborted 仅 hook（自动化策略终止，附 reason 文案，有信息量）、legacy
+  // （0.1.x 历史标记，0.2.0 已移除、仅旧日志回放可能出现）与未知扩展 kind 保留推送。
+  if (kind === 'aborted') {
+    const cause = reason.reason?.kind
+    if (cause === undefined || cause === 'user' || cause === 'parent' || cause === 'disposed' || cause === 'legacy') return null
+  }
   let headline = ''
   if (kind === 'error') {
     const failure = reason.error

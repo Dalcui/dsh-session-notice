@@ -3,13 +3,18 @@
 DSH（DeepSeek Harness）会话 Bark 通知插件：在会话界面点一个按钮切换「会通知」状态，该会话轮次停止时自动经 [Bark](https://bark.day.app) 推送到手机。
 
 - **正常结束** → 推送最后一条文本消息（长文按「首段 + 末段」摘要）
-- **异常停止**（出错 / 中止 / 被阻塞 / Token 上限 / 中断）→ 推送**完整错误内容**（不按正文那样摘要截取）与必要信息
+- **异常停止**（出错 / 被阻塞 / Token 上限 / 崩溃遗留 / 钩子中止）→ 推送**完整错误内容**（不按正文那样摘要截取）与必要信息
+- **你主动点「停止」不通知**（aborted 且 cause 为 user/parent/disposed 等中止链，含主会话停止时级联到 subagent 的 parent 中止）
 - 开关**按会话独立**、持久化（服务重启后保持），随时可切换
 - 插件管理页本插件详情页配置 Bark `server` / `key`，并提供 ping → push → register 三步连通测试（dsh ≥ 0.1.7；0.1.5 为「设置 → 插件配置区」卡片）
 
 ## 安装
 
-> **版本要求**：适配 dsh **0.1.7-rc.2**（dsh-settings 0.1.7 重构：`settings.register` 移除，改为插件 `Config` 导出 + volatile 字段 + `ctx.settings.describe/update`；客户端设置入口从 `settings.plugin.item` 迁移到 `plugins.bundle.config`）。0.1.5 及以下旧版 dsh 请用本仓库 0.1.5 时代的历史提交。
+> **版本要求**：适配 dsh **0.1.5 – 0.2.0-rc.2**。
+>
+> - dsh **0.2.0** 起（本仓库 0.2.1 起）：插件需在 `peerDependencies` 声明兼容的 dsh 运行时版本，否则启动时被跳过加载（`Plugin ... is incompatible with dsh ...`）。本仓库已声明 `^0.1.5-rc.1 || ^0.1.7-rc.1 || ^0.2.0-rc.1`。dsh 0.2.0 的 `aborted` cause 联合类型收敛为 `user/parent/disposed/hook`（移除 `legacy`），本插件照常识别并保持「用户主动停止不通知」语义。
+> - dsh **0.1.7**（0.1.7-rc.2 起可用）：dsh-settings 重构（`settings.register` 移除，改为插件 `Config` 导出 + volatile 字段 + `ctx.settings.describe/update`；客户端设置入口从 `settings.plugin.item` 迁移到 `plugins.bundle.config`）。
+> - dsh **0.1.5** 及以下旧版请用本仓库 0.1.5 时代的历史提交。
 
 ```bash
 # 推荐：link 安装（符号链接，改动源码后无需重装）
@@ -41,6 +46,7 @@ dsh plugin --profile web add github:Dalcui/dsh-session-notice
 ## 实现要点
 
 - **回合结束监听**：Host 侧 `ctx.on('session/event')` 按 `event.type === 'turn/end'` 分派，完整区分六种停止原因（`agent/turn-stopping` 只自然收尾触发、会漏异常路径，故不采用）。**主会话等待 subagent 返回时不会误通知**——subagent 调用是未完成的工具调用，回合不结束即不写 `turn/end`；只有真正收尾才推一条汇总。
+- **用户主动停止不通知**：`aborted` 且 cause 属 user/parent/disposed（含 cause 缺失的历史事件）保持沉默——停止是用户自己按的，通知只会打扰；主会话被停时其 subagent 收到的是 parent 级联中止，同样静默（防一次点击多条轰炸）。`hook`（自动化策略终止，附 reason 文案）保留推送。
 - **正文双层预算**：
   - *展示层* —— 仅**正常完成**时对正文做默认 200 字摘要（方案 C：首段 + 末段，跳过代码块，按码点不劈 emoji），超出缀「（共 N 字）」。因为 iOS 横幅约 4 行（≈80–120 中文字），全量塞入既看不全又笨重。**异常停止**不做展示层摘要，错误内容完整保留（仅协议层字节闸门兜底）。
   - *协议层* —— 整包 JSON ≤ **3900 字节**（同时满足 nginx 8192B 与 APNs 4096B），`truncateByBytes` 按码点兜底。
@@ -48,9 +54,16 @@ dsh plugin --profile web add github:Dalcui/dsh-session-notice
 - **失败分类**：网络 / 鉴权（418 纯文本，不按 401 判）/ 体积（413 HTML）/ 密钥错误（`device token`，熔断不重试）/ 上游 5xx / 格式错；403/429 属运维层，不归密钥错。
 - **`/register` 安全红线**：只允许 `GET {server}/register/<key>`，key 为空禁止发请求、永不带 query/body（裸 `/register` 是写接口，会覆盖设备 token）。
 - **直连传输（绕开环境代理劫持）**：发送/探测默认走 `directFetch`（`node:http/https` + `agent:false`，不读取 `HTTP(S)_PROXY` / `NODE_USE_ENV_PROXY`）。原因：Node ≥ 24 在进程环境携带 `NODE_USE_ENV_PROXY=1` 与代理变量（如 launchd plist 注入 Clash Verge 的 `127.0.0.1:7897`）时，全局 `fetch` 会被劫持到代理，代理不可达时推送全部 `fetch failed`、无任何日志。若自建 Bark 服务器必须在代理网络内才可达（罕见），可用环境变量 `BARK_USE_FETCH=1` 显式回退全局 fetch。
-- **HTTP 路由而非 connection.rpc**：`ctx.connection.rpc.handle` 在本机 0.1.5-rc.1 上会用调用者 fiber 访问 `ctx.webServer` 而抛 `cannot get property "webServer" without inject`，导致整个 profile 崩溃循环。因此改用与 `dsh-codebuddy-cli` 相同的写法：`ctx.inject(['webServer'], webCtx => webCtx.webServer.register({ kind: 'exact', path: '/plugins/dsh-session-notice/*' }))`，客户端直接 `fetch`。4 个路由逐个 try/catch（dsh 0.1.7 对重复路由注册直接 throw，防止极端 HMR 时序下全部路由丢失）。
+- **HTTP 路由而非 connection.rpc**：`ctx.connection.rpc.handle` 在本机 0.1.5-rc.1 上会用调用者 fiber 访问 `ctx.webServer` 而抛 `cannot get property "webServer" without inject`，导致整个 profile 崩溃循环。因此改用与 `dsh-codebuddy-cli` 相同的写法：`ctx.inject(['webServer'], webCtx => webCtx.webServer.register({ kind: 'exact', path: '/plugins/dsh-session-notice/*' }))`，客户端直接 `fetch`。4 个路由逐个 try/catch（dsh 0.1.7 起对重复路由注册直接 throw，防止极端 HMR 时序下全部路由丢失）。
 - **卡片样式**：`dsh-client-ui-settings-plugins` 不导出 `PluginCard`（跨插件值导入被纯度门禁禁止），故自写 CSS 复刻原生观感（`--dsw-alias-*` 主题变量、12px 圆角、34px 输入框、15/13 字号）。
 - **group 归一化**：trim + 去控制字符 + ≤40 字节；归一后为空则**省略字段**（`group:""` 会形成空名分组），超限回退 `<basename> · <sha1(cwd) 前 6>`。
+
+## 0.2.0 适配说明
+
+dsh 0.2.0-rc.2（本机实测，2026-09-30）：
+
+- **插件 peerDependencies 版本门禁（唯一破坏面）**：dsh-app-boot 新增 `evaluatePluginCompatibility`，逐项检查插件 `peerDependencies` 中 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 是否 semver 满足运行时版本（`includePrerelease`；`workspace:^|~|*` 视为当前运行时）。不满足的插件**整体跳过加载**（组合树缺失、patch 报 entry not found、HTTP 路由 404）。解法：peerDeps 增加 `^0.2.0-rc.1` 分支（或用 `workspace:*`，但二者不可混用——`workspace:` 前缀会使整条 range 恒不满足）。
+- **复核未变**：`ctx.settings.describe()/update()` 契约、`webServer.register({ kind:'exact' })`、`session/event` 的 `turn/end` 六种 reason 形状（`blocked`/`max-tokens`/`interrupted`/`error`/`completed`/`aborted`）、`Session.snapshotEvents()`、客户端 slots `plugins.bundle.config`（keyed，key=包名）与 `conversation.session.header.utilities`（list，standardProps 带 sessionId）、浏览器半 `window.__ModuleLoader__.load({id, factory})` 懒 CJS 格式、schemastery `.volatile()`/`.role('secret')`。
 
 ## 0.1.7 适配
 
@@ -69,7 +82,7 @@ dsh-settings 0.1.7 重构了插件设置契约（本机 0.1.7-rc.2 实测）：
 ```bash
 npm install --legacy-peer-deps   # 类型检查所需 @deepseek-ai/* 从本机 DSH/profile 链接
 npm run build                    # tsc（Host 半）+ esbuild（浏览器半 → lib/client.js）
-npm test                         # node:test（81 用例：纯函数 + 有状态 mock + 假接线）
+npm test                         # node:test（100 用例：纯函数 + 有状态 mock + 假接线）
 npm run typecheck
 ```
 

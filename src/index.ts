@@ -9,6 +9,13 @@
  *      （Host 侧发送：bark-server 无 CORS，浏览器直连自建必失败）；
  *   3. /plugins/dsh-session-notice loopback RPC：设置页与会话按钮经此读写（密钥永不过线）。
  *
+ * 0.2.0 兼容性（本机 0.2.0-rc.2 源码验证，无代码改动）：settings.describe/update
+ * 契约、webServer 路由 register、session/event turn/end 六种 reason、客户端
+ * slots 两入口（plugins.bundle.config / conversation.session.header.utilities）、
+ * 浏览器半 __ModuleLoader__ 懒 CJS 加载格式全部保持；唯一破坏面是 dsh 0.2.0
+ * 新增的插件 peerDependencies 版本门禁（dsh-app-boot evaluatePluginCompatibility），
+ * 在 package.json peerDeps 增加 ^0.2.0-rc.1 行解决。
+ *
  * 0.1.5→0.1.7 适配要点（本机 0.1.7-rc.2 源码验证）：
  * - ctx.settings.register(ns, schema, { base, applies }) 已移除；改为导出
  *   Config（含 volatile 字段）+ ctx.settings.describe()/update(ns, patch)；
