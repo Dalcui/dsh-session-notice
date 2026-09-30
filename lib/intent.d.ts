@@ -3,12 +3,13 @@
  *
  * 输入是与 dsh-session 的 TurnEndReasonMap 结构兼容的最小形状（不 import DSH
  * 包，测试环境无 node_modules 也能跑）。六种 reason 全部区分：
- * completed / aborted / blocked / error / max-tokens / interrupted。
+ * completed / aborted / blocked / error / max-tokens / interrupted（0.2.0 另有
+ * forked 标记，仅 fork 种子构建写入、运行时不发出，本映射按未知 kind 沉默）。
  * 例外：**用户主动中止链**（aborted 且 cause 为 user/parent/disposed，含 cause
  * 缺失的历史事件）返回 null 保持沉默 —— 停止是用户自己按的，通知只会打扰；
  * 主会话被停时其 subagent 收到的是 parent 级联中止，同样静默（防一次点击多条
- * 轰炸）。dsh 0.2.0 的 cancel cause 联合类型收敛为 user/parent/disposed/hook
- * （0.1.x 的 legacy 在 0.2.0 已不存在；仍保留识别以防旧日志回放）。
+ * 轰炸）。dsh 0.2.0 运行时取消 cause 收敛为 user/parent/disposed/hook；持久化
+ * 联合类型仍保留 legacy（无 cause 的 0.1.x 旧记录），照常识别并归入静默链。
  * @module dsh-session-notice/intent
  */
 import type { BarkLevel } from './constants.js';

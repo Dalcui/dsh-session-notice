@@ -12,7 +12,7 @@ DSH（DeepSeek Harness）会话 Bark 通知插件：在会话界面点一个按�
 
 > **版本要求**：适配 dsh **0.1.5 – 0.2.0-rc.2**。
 >
-> - dsh **0.2.0** 起（本仓库 0.2.1 起）：插件需在 `peerDependencies` 声明兼容的 dsh 运行时版本，否则启动时被跳过加载（`Plugin ... is incompatible with dsh ...`）。本仓库已声明 `^0.1.5-rc.1 || ^0.1.7-rc.1 || ^0.2.0-rc.1`。dsh 0.2.0 的 `aborted` cause 联合类型收敛为 `user/parent/disposed/hook`（移除 `legacy`），本插件照常识别并保持「用户主动停止不通知」语义。
+> - dsh **0.2.0** 起（本仓库 0.2.1 起）：插件需在 `peerDependencies` 声明兼容的 dsh 运行时版本，否则启动时被跳过加载（`Plugin ... is incompatible with dsh ...`）。本仓库已声明 `^0.1.5-rc.1 || ^0.1.7-rc.1 || ^0.2.0-rc.1`。dsh 0.2.0 **运行时**取消 cause 收敛为 `user/parent/disposed/hook`；**持久化**联合类型仍保留 `legacy`（无 cause 的 0.1.x 旧记录），本插件照常识别并归入「用户主动停止不通知」静默链。
 > - dsh **0.1.7**（0.1.7-rc.2 起可用）：dsh-settings 重构（`settings.register` 移除，改为插件 `Config` 导出 + volatile 字段 + `ctx.settings.describe/update`；客户端设置入口从 `settings.plugin.item` 迁移到 `plugins.bundle.config`）。
 > - dsh **0.1.5** 及以下旧版请用本仓库 0.1.5 时代的历史提交。
 
@@ -63,7 +63,7 @@ dsh plugin --profile web add github:Dalcui/dsh-session-notice
 dsh 0.2.0-rc.2（本机实测，2026-09-30）：
 
 - **插件 peerDependencies 版本门禁（唯一破坏面）**：dsh-app-boot 新增 `evaluatePluginCompatibility`，逐项检查插件 `peerDependencies` 中 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 是否 semver 满足运行时版本（`includePrerelease`；`workspace:^|~|*` 视为当前运行时）。不满足的插件**整体跳过加载**（组合树缺失、patch 报 entry not found、HTTP 路由 404）。解法：peerDeps 增加 `^0.2.0-rc.1` 分支（或用 `workspace:*`，但二者不可混用——`workspace:` 前缀会使整条 range 恒不满足）。
-- **复核未变**：`ctx.settings.describe()/update()` 契约、`webServer.register({ kind:'exact' })`、`session/event` 的 `turn/end` 六种 reason 形状（`blocked`/`max-tokens`/`interrupted`/`error`/`completed`/`aborted`）、`Session.snapshotEvents()`、客户端 slots `plugins.bundle.config`（keyed，key=包名）与 `conversation.session.header.utilities`（list，standardProps 带 sessionId）、浏览器半 `window.__ModuleLoader__.load({id, factory})` 懒 CJS 格式、schemastery `.volatile()`/`.role('secret')`。
+- **复核未变**：`ctx.settings.describe()/update()` 契约、`webServer.register({ kind:'exact' })`、`session/event` 的 `turn/end` 六种 live reason 形状（`blocked`/`max-tokens`/`interrupted`/`error`/`completed`/`aborted`；0.2.0 另有 `forked` 种子标记，仅 fork 种子构建写入、运行时不发出，插件按未知 kind 沉默）、`Session.snapshotEvents()`、客户端 slots `plugins.bundle.config`（keyed，key=包名）与 `conversation.session.header.utilities`（list，standardProps 带 sessionId）、浏览器半 `window.__ModuleLoader__.load({id, factory})` 懒 CJS 格式、schemastery `.volatile()`/`.role('secret')`。
 
 ## 0.1.7 适配
 

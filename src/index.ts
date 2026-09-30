@@ -10,7 +10,8 @@
  *   3. /plugins/dsh-session-notice loopback RPC：设置页与会话按钮经此读写（密钥永不过线）。
  *
  * 0.2.0 兼容性（本机 0.2.0-rc.2 源码验证，无代码改动）：settings.describe/update
- * 契约、webServer 路由 register、session/event turn/end 六种 reason、客户端
+ * 契约、webServer 路由 register、session/event turn/end 六种 live reason（另有
+ * forked 种子标记，运行时不发出）、客户端
  * slots 两入口（plugins.bundle.config / conversation.session.header.utilities）、
  * 浏览器半 __ModuleLoader__ 懒 CJS 加载格式全部保持；唯一破坏面是 dsh 0.2.0
  * 新增的插件 peerDependencies 版本门禁（dsh-app-boot evaluatePluginCompatibility），
