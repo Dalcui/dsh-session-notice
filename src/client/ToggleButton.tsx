@@ -49,13 +49,23 @@ function BellIcon(enabled: boolean): ReactElement {
   )
 }
 
-/** tooltip 样式（自绘，跟随主题变量；绝对定位在按钮下方、右对齐）。 */
+/**
+ * tooltip 样式（自绘，跟随主题变量；绝对定位在按钮下方、右对齐）。
+ *
+ * 关键：width 必须为 max-content。按钮本身只有 28px 宽且是唯一 position:relative
+ * 的祖先（即包含块），绝对定位元素的 shrink-to-fit 宽度上限 = 包含块宽度，
+ * 缺省写法会把 tooltip 压到只剩一个字宽；max-content 允许盒子按内容自然伸展、
+ * 以 maxWidth 260 封顶后换行（border-box 使 260 含内边距）。
+ */
 const TOOLTIP_STYLE: React.CSSProperties = {
   position: 'absolute',
   top: 'calc(100% + 6px)',
   right: 0,
   zIndex: 100,
+  width: 'max-content',
   maxWidth: 260,
+  boxSizing: 'border-box',
+  textAlign: 'left',
   padding: '6px 10px',
   borderRadius: 6,
   background: 'var(--dsw-alias-bg-module-platform)',
