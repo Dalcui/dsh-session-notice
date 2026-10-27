@@ -89,6 +89,9 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
   const [busy, setBusy] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  // Host RPC 不可用时的原因（例如局域网访问被路由的信任校验拒绝）；
+  // 保留下来用于悬浮/点击时提示，避免「按钮在但点了没反应」。
+  const [error, setError] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -96,7 +99,17 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
     setReady(false)
     void (async () => {
       const res = await rpc('state', {})
-      if (!alive || !res.ok) return
+      if (!alive) return
+      // 无论 /state 成败都要把按钮渲染出来：失败时按「未开启」呈现，
+      // 让用户仍能看到并点击按钮（点击会再次尝试并给出失败提示），
+      // 而不是整块消失 —— 早期版本在此 return，一旦 Host RPC 不可用
+      // （例如局域网访问被安全校验拒绝）按钮就彻底不显示，且没有任何线索。
+      if (!res.ok) {
+        setError(res.error?.message ?? '状态读取失败')
+        setReady(true)
+        return
+      }
+      setError(null)
       const sessions = (res.value?.enabledSessions ?? []) as string[]
       setEnabled(sessions.includes(sessionId))
       setReady(true)
@@ -126,9 +139,14 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
     try {
       const res = await rpc('toggle', { sessionId })
       if (res.ok) {
+        setError(null)
         const next = Boolean(res.value?.enabled)
         setEnabled(next)
         showToast(next ? '已开启：本会话回合停止时 Bark 通知手机' : '已关闭本会话通知')
+      } else {
+        const message = res.error?.message ?? '未知错误'
+        setError(message)
+        showToast(`切换失败：${message}`)
       }
     } finally {
       setBusy(false)
@@ -137,7 +155,11 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
 
   if (!ready) return null
 
-  const hoverHint = enabled ? '回合停止时会 Bark 通知手机；点击取消' : '点击开启：本会话回合停止时 Bark 通知手机'
+  const hoverHint = error !== null
+    ? `Bark 通知不可用：${error}`
+    : enabled
+      ? '回合停止时会 Bark 通知手机；点击取消'
+      : '点击开启：本会话回合停止时 Bark 通知手机'
   // 点击反馈优先于悬浮说明；两者都为空时不渲染 tooltip。
   const tip = toast ?? (hovered ? hoverHint : null)
 
@@ -162,9 +184,20 @@ export function ToggleButton({ rpc, sessionId }: { rpc: RpcCall; sessionId: stri
         padding: 0,
         borderRadius: 8,
         // 与设置卡片同款主题变量（跟随明暗主题）。
-        border: `1px solid ${enabled ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
+        border: `1px solid ${
+          error !== null
+            ? 'var(--dsw-alias-state-error-primary, #d44)'
+            : enabled
+              ? 'var(--dsw-alias-brand-primary)'
+              : 'var(--dsw-alias-border-l2)'
+        }`,
         background: enabled ? 'var(--dsw-alias-bg-module-platform)' : 'transparent',
-        color: enabled ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-secondary)',
+        color:
+          error !== null
+            ? 'var(--dsw-alias-state-error-primary, #d44)'
+            : enabled
+              ? 'var(--dsw-alias-brand-primary)'
+              : 'var(--dsw-alias-label-secondary)',
         cursor: busy ? 'default' : 'pointer',
         opacity: busy ? 0.6 : 1,
       }}

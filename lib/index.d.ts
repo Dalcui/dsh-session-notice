@@ -7,7 +7,7 @@
  *      读写，值持久化到 patch、live 生效、重启后保持；entry id = 'bark-notify'；
  *   2. session/event 监听：turn/end 六种 reason → 检查该会话开关 → 组装并推送 Bark
  *      （Host 侧发送：bark-server 无 CORS，浏览器直连自建必失败）；
- *   3. /plugins/dsh-session-notice loopback RPC：设置页与会话按钮经此读写（密钥永不过线）。
+ *   3. /plugins/dsh-session-notice HTTP RPC：设置页与会话按钮经此读写（密钥永不过线）。
  *
  * 0.2.0 兼容性（本机 0.2.0-rc.2 源码验证，无代码改动）：settings.describe/update
  * 契约、webServer 路由 register、session/event turn/end 六种 live reason（另有

@@ -9,7 +9,7 @@
  * `ctx.inject(['webServer'], (webCtx) => webCtx.webServer.register({ kind:'exact', ... }))`
  * 自建精确路径路由，client 半直接 fetch 这些路径。
  *
- * 路由（仅 loopback 可信请求）：
+ * 路由（仅本机回环或浏览器同源可信请求；详见 trustedRequest 注释）：
  *   GET  /plugins/dsh-session-notice/state   → 脱敏设置视图（server 掩码 / key 末 4 位）
  *   POST /plugins/dsh-session-notice/set     → 写 server/key/group（key 仅新值）
  *   POST /plugins/dsh-session-notice/toggle  → 翻转某会话「会通知」状态

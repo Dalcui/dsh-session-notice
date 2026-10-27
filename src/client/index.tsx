@@ -1,7 +1,7 @@
 /**
  * dsh-session-notice —— 浏览器半入口。
  *
- * 注册两处 UI，数据全部走 Host 自建的 loopback HTTP 路由
+ * 注册两处 UI，数据全部走 Host 自建的 HTTP 路由（信任判定见 rpc.ts trustedRequest）
  * （/plugins/dsh-session-notice/*，见 Host 半 rpc.ts；不再用 connection.rpc，
  * 因为该 API 在 0.1.5-rc.1 web profile 上会因 webServer 注入时序崩溃）。
  *  1. `plugins.bundle.config`（key = npm 包名 'dsh-session-notice'）——

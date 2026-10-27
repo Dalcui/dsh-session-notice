@@ -4,7 +4,7 @@
  * dsh-settings 0.1.7 移除了 `settings.plugin.item`，插件配置页面统一从插件管理页
  * 的 bundle 配置区进入（`plugins.bundle.config`，owner 仅以 `view: 'page'` 渲染，
  * 无 summary 分支）。本组件仍走 Host 自建
- * loopback RPC（/plugins/dsh-session-notice/*），不使用 owner 传入的 form 通道。
+ * HTTP RPC（/plugins/dsh-session-notice/*），不使用 owner 传入的 form 通道。
  *
  * 样式与 DSH 内置及其它插件卡片保持一致：`li` 卡片 + `--dsw-alias-*` 主题变量
  * （border-l2 / bg-layer-3 / brand-primary / label-* ），header 折叠 + body 字段
@@ -132,7 +132,7 @@ function ChevronIcon(open: boolean): ReactElement {
 
 /**
  * 插件配置页（plugins.bundle.config 的 page 视图；owner 仅以 page 渲染）。
- * 数据全部走 Host loopback RPC，不使用 owner 传入的 form 通道。
+ * 数据全部走 Host HTTP RPC，不使用 owner 传入的 form 通道。
  */
 export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
   const [view, setView] = useState<SettingsView | null>(null)
