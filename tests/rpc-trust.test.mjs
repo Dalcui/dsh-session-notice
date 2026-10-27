@@ -1,9 +1,12 @@
 /**
  * RPC 来源信任判定（src/rpc.ts trustedRequest 及其组件）的表驱动测试。
  *
- * 这些判定是本插件**唯一**的来源安全闸门：部署环境中的上游 compat 层会把
- * Origin / Sec-Fetch-Site 洗成回环值，因此「Host 是否属于本部署」一条就决定
- * 了安全性（历史漏洞：/^127\./ 前缀匹配让 127.evil.com 被当成回环）。
+ * 这些判定是本插件**唯一**的来源安全闸门（历史漏洞：/^127\./ 前缀匹配曾让
+ * 127.evil.com 被当成回环，进而可无认证读取脱敏设置）。
+ *
+ * 部署环境中的上游 compat 层在「外部直连」形态下会把 Origin / Sec-Fetch-Site
+ * 洗成回环值，此时只剩「Host 是否属于本部署」一条生效；在本机回环形态下则
+ * 三条判据均生效（详见 src/rpc.ts trustedRequest 注释）。
  */
 import assert from 'node:assert/strict'
 import { networkInterfaces } from 'node:os'
@@ -12,6 +15,7 @@ import test from 'node:test'
 import {
   isLoopbackHostname,
   isSameAuthorityOrigin,
+  normalizeHostname,
   parseAuthority,
   trustedRequest,
 } from '../lib/rpc.js'
@@ -63,14 +67,19 @@ test('trustedRequest：本机回环访问放行', () => {
   }
 })
 
-test('trustedRequest：本机网卡 IP（局域网形态）放行 —— 本次缺陷的修复目标', () => {
+test('trustedRequest：本机网卡 IP（局域网形态）放行 —— 本次缺陷的修复目标', (t) => {
   // 取真实网卡 IP，避免硬编码
   const localIps = Object.values(networkInterfaces())
     .flat()
     .filter(Boolean)
     .map((e) => (e.address || '').toLowerCase().replace(/^::ffff:/, '').split('%')[0])
     .filter((a) => a && a !== 'localhost' && !isLoopbackHostname(a))
-  if (localIps.length === 0) return // 无网卡时跳过
+  if (localIps.length === 0) {
+    // 显式 skip 而不是静默 return：无网卡的 CI 上应显示为 skipped，
+    // 否则「0 断言但记 pass」会让这段覆盖悄悄消失且无人察觉。
+    t.skip('当前环境无非回环网卡，跳过局域网 IP 用例')
+    return
+  }
   for (const ip of localIps) {
     // IPv6 在 Host 头里必须带方括号（RFC 3986），浏览器也只会这么发。
     const host = ip.includes(':') ? `[${ip}]:3080` : `${ip}:3080`
@@ -145,4 +154,64 @@ test('trustedRequest：trustedHosts 名单语义（显式端口精确匹配 / �
   assert.equal(trustedRequest(req({ host }), ['harness.internal:9999']), false)
   // 名单为空：自定义域名不可用（安全降级为仅回环 + 网卡 IP）
   assert.equal(trustedRequest(req({ host }), []), false)
+})
+
+test('isSameAuthorityOrigin：回环别名互认但端口不放宽（跨端口必须拒绝）', () => {
+  // 别名互认：localhost 与 127.0.0.1 指同一服务的同端口（历史回归修复点）
+  assert.equal(isSameAuthorityOrigin('http://127.0.0.1:3080', 'localhost', '3080'), true)
+  assert.equal(isSameAuthorityOrigin('http://localhost:3080', '127.0.0.1', '3080'), true)
+  assert.equal(isSameAuthorityOrigin('http://[::1]:3080', '127.0.0.1', '3080'), true)
+
+  // 跨端口：不同 TCP 端点，必须拒绝
+  // （否则本机其他端口上被攻破的服务可跨端口调用 /set 改写 Bark key）
+  assert.equal(isSameAuthorityOrigin('http://127.0.0.1:9999', '127.0.0.1', '3080'), false)
+  assert.equal(isSameAuthorityOrigin('http://localhost:9999', '127.0.0.1', '3080'), false)
+  assert.equal(isSameAuthorityOrigin('http://127.0.0.1:80', '127.0.0.1', '3080'), false)
+  assert.equal(isSameAuthorityOrigin('http://127.0.0.1:3080', '127.0.0.1', '9999'), false)
+})
+
+test('trustedRequest：回环跨端口 Origin 在整链路上同样被拒绝', () => {
+  assert.equal(
+    trustedRequest(req({ host: '127.0.0.1:3080', origin: 'http://127.0.0.1:9999' }), []),
+    false,
+  )
+  // 同端口别名互认仍放行（不回归）
+  assert.equal(
+    trustedRequest(req({ host: 'localhost:3080', origin: 'http://127.0.0.1:3080' }), []),
+    true,
+  )
+})
+
+test('trustedRequest：IPv4-mapped IPv6 归一（真回环放行，伪域名拒绝）', () => {
+  // ::ffff:127.0.0.1 是回环的映射形式 → 放行
+  assert.equal(trustedRequest(req({ host: '[::ffff:127.0.0.1]:3080' }), []), true)
+  // ::ffff: 后跟域名：归一后仍须过严格 IPv4 判定 → 拒绝
+  assert.equal(trustedRequest(req({ host: '[::ffff:127.evil.com]:3080' }), []), false)
+  assert.equal(trustedRequest(req({ host: '[::ffff:127.0.0.1.nip.io]:3080' }), []), false)
+  // ::ffff: 后跟公网 IP：不属于本部署 → 拒绝
+  assert.equal(trustedRequest(req({ host: '[::ffff:8.8.8.8]:3080' }), []), false)
+})
+
+test('trustedRequest：trustedHosts 与 Origin 同源必须联动', () => {
+  // 名单放行 Host 且 Origin 同 authority → 放行
+  assert.equal(
+    trustedRequest(req({ host: 'harness.internal:3080', origin: 'http://harness.internal:3080' }), ['harness.internal']),
+    true,
+  )
+  // Host 受信不能放松 Origin：跨端口 → 拒绝
+  assert.equal(
+    trustedRequest(req({ host: 'harness.internal:3080', origin: 'http://harness.internal:9999' }), ['harness.internal']),
+    false,
+  )
+  // Host 受信不能放松 Origin：跨域 → 拒绝
+  assert.equal(
+    trustedRequest(req({ host: 'harness.internal:3080', origin: 'http://evil.com' }), ['harness.internal']),
+    false,
+  )
+})
+
+test('normalizeHostname：剥离 IPv6 zone 与方括号（可用性，防链路本地误 403）', () => {
+  assert.equal(normalizeHostname('fe80::1%12'), 'fe80::1')
+  assert.equal(normalizeHostname('[fe80::1%12]'), 'fe80::1')
+  assert.deepEqual(parseAuthority('[fe80::1%12]:3080'), { hostname: 'fe80::1', port: '3080' })
 })
