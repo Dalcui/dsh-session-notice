@@ -153,6 +153,10 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     const res = await rpc('state', {})
     if (!res.ok) {
       setLoadError(res.error?.message ?? 'RPC failed')
+      // 失败时自动展开：否则错误只渲染在折叠体内部（默认折叠），
+      // 用户看到的只是一张「什么都没加载出来」的空白卡片，毫无线索。
+      // 这是与 ToggleButton「静默消失」同族的致盲缺陷。
+      setOpen(true)
       return
     }
     const value = res.value as SettingsView
@@ -248,7 +252,14 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
             会话轮次停止时经 Bark 推送到手机；在会话头部按钮按会话开关
           </span>
         </span>
-        {dirty ? <span className="dsn-pending">未保存</span> : null}
+        {loadError.length > 0 ? (
+          // 折叠态也要让失败可见（红色徽标 + 悬浮原因），不能只在展开体里提示。
+          <span className="dsn-pending" style={{ color: 'var(--dsw-alias-state-error-primary, #d44)' }} title={`设置加载失败：${loadError}`}>
+            加载失败
+          </span>
+        ) : dirty ? (
+          <span className="dsn-pending">未保存</span>
+        ) : null}
         {ChevronIcon(open)}
       </button>
 

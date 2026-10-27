@@ -52,15 +52,39 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload)
 }
 
-/** 规范化 IPv6 文本（去方括号、小写）。 */
-function normalizeHostname(name: string): string {
+/** 规范化主机名（去首尾空白、去 IPv6 方括号、小写）。 */
+export function normalizeHostname(name: string): string {
   return name.trim().toLowerCase().replace(/^\[|\]$/g, '')
 }
 
-/** hostname 是否为本机回环变体。 */
-function isLoopbackHostname(hostname: string): boolean {
+/** 严格 4 段点分十进制 IPv4 判定（不接受域名、不做前缀猜测）。 */
+function isIpv4Literal(text: string): boolean {
+  const parts = text.split('.')
+  if (parts.length !== 4) return false
+  return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
+/**
+ * hostname 是否为本机回环变体。
+ *
+ * **必须严格判定**：早期写法用 `/^127\./`，会把 `127.evil.com`、
+ * `127.0.0.1.nip.io` 这类攻击者可控域名判成回环 —— 由于 Host 判定是
+ * 本插件唯一的来源闸门，这等于对任意域名开放（实测可直接读到脱敏设置）。
+ * 因此这里只认：localhost、IPv6 回环字面量、以及 127.0.0.0/8 的
+ * **合法 4 段 IPv4 字面量**。
+ * @param hostname - 已小写、去方括号的主机名。
+ */
+export function isLoopbackHostname(hostname: string): boolean {
   const bare = normalizeHostname(hostname)
-  return bare === 'localhost' || bare === '::1' || bare === '0:0:0:0:0:0:0:1' || bare === '127.0.0.1' || /^127\./.test(bare)
+  if (bare === 'localhost') return true
+  if (bare === '::1' || bare === '0:0:0:0:0:0:0:1') return true
+  return isIpv4Literal(bare) && bare.split('.')[0] === '127'
+}
+
+/** 回环别名等价：localhost / 127.0.0.0/8 / ::1 视为同一台本机。 */
+function isLoopbackEquivalent(left: string, right: string): boolean {
+  if (left === right) return true
+  return isLoopbackHostname(left) && isLoopbackHostname(right)
 }
 
 /** 本机网卡 IP 缓存有效期（DHCP 换 IP 后最多延迟该时长生效）。 */
@@ -101,73 +125,151 @@ function localNonLoopbackIps(): Set<string> {
   return ips
 }
 
-/**
- * 请求是否可信。
- *
- * **直接对齐 DSH 自身的 `isTrustedApiRequest` 语义**
- * （@deepseek-ai/dsh-client-connection，即 DSH 用来守护 /api RPC 桥的同款判定），
- * 而不是自行发明一套：插件路由是 DSH webserver 上的普通路由，
- * 其可信边界应与 DSH 自己一致。
- *
- * 判据：
- *  1. Host 必须是「我们的」：回环、**本机某个网卡 IP**、或 `trustedHosts` 名单内的权威；
- *  2. 禁止 `Sec-Fetch-Site: cross-site`（跨站）；
- *  3. 若带 Origin，则必须与 Host 同源。
- *
- * ### 为什么旧写法（只判 Host/Origin 是否回环）是错的
- * 局域网 / 移动端经 LAN IP 访问时浏览器发出的 Host 是 `192.168.x.x:3080`，
- * 永远不是回环地址 —— 只判回环会让本插件全部 RPC 在局域网访问下 403，
- * 而 client 半的 ToggleButton 拿不到 /state 就 `return null`，
- * 表现为「局域网访问时本插件按钮不显示」。
- *
- * ### 为什么不能只靠 Origin 判同源
- * 浏览器对**同源 GET** 的 fetch 默认不发送 Origin，因此「Origin 存在且同源」
- * 作为唯一放行条件会让正常请求被拒（实测：真实浏览器 fetch 全部 403）。
- * 正确的做法是像 DSH 那样：先确认 Host 属于本部署，再看 Origin 是否与之一致。
- *
- * ### 身份认证不在这里
- * 真正的设备认证由 DSH 上游完成（dsh-remote-mobile 的 token 门禁、
- * dsh-client-connection 的 Cookie 鉴权），本插件路由在它们之后才被调用，
- * 因此这里只做「跨站 / DNS-rebinding」这一类来源校验，不重复实现设备认证。
- *
- * @param req - 待校验的 HTTP 请求。
- * @param trustedHosts - DSH 部署声明服务的额外非回环权威（可为空；
- *   「本机网卡 IP」已由 localNonLoopbackIps() 自行覆盖，不依赖上游注入是否成功）。
- */
-function trustedRequest(req: IncomingMessage, trustedHosts: readonly string[]): boolean {
-  const host = req.headers.host
-  if (typeof host !== 'string' || host.length === 0) return false
-
-  // 1. Host 必须属于本部署：回环 / trustedHosts / 监听地址字面量。
-  const hostname = normalizeHostname(host.startsWith('[') ? (host.slice(1).split(']')[0] ?? '') : (host.split(':')[0] ?? ''))
-  if (hostname.length === 0) return false
-  let hostOk = isLoopbackHostname(hostname)
-  // 1b. 本机某个网卡 IP：局域网 / 移动端访问时的正常形态。
-  if (!hostOk) hostOk = localNonLoopbackIps().has(hostname)
-  if (!hostOk) {
-    for (const entry of trustedHosts) {
-      const entryHostname = normalizeHostname(
-        entry.startsWith('[') ? (entry.slice(1).split(']')[0] ?? '') : (entry.split(':')[0] ?? ''),
-      )
-      if (entryHostname.length > 0 && entryHostname === hostname) {
-        hostOk = true
-        break
-      }
+/** 解析 authority 为 { hostname, port }（port 缺省为空串）。 */
+export function parseAuthority(authority: string): { hostname: string; port: string } | undefined {
+  const trimmed = authority.trim()
+  if (trimmed.length === 0) return undefined
+  let hostname: string
+  let port = ''
+  if (trimmed.startsWith('[')) {
+    const close = trimmed.indexOf(']')
+    if (close === -1) return undefined
+    hostname = trimmed.slice(1, close)
+    const rest = trimmed.slice(close + 1)
+    if (rest.startsWith(':')) port = rest.slice(1)
+    else if (rest.length > 0) return undefined
+  } else {
+    const colonAt = trimmed.lastIndexOf(':')
+    // 多于一个冒号且无方括号 → 裸 IPv6 字面量，整串都是主机名。
+    if (colonAt === -1 || trimmed.indexOf(':') !== colonAt) {
+      hostname = trimmed
+    } else {
+      hostname = trimmed.slice(0, colonAt)
+      port = trimmed.slice(colonAt + 1)
     }
   }
-  if (!hostOk) return false
+  const normalized = normalizeHostname(hostname)
+  if (normalized.length === 0) return undefined
+  return { hostname: normalized, port }
+}
 
-  // 2. 跨站请求一律拒绝（浏览器强制填写，页面脚本无法伪造）。
-  if (req.headers['sec-fetch-site'] === 'cross-site') return false
+/**
+ * Host 是否属于「本部署」。
+ *
+ * 三类可信来源：
+ *  1. 回环（localhost / 127.0.0.0/8 字面量 / ::1）及其 IPv4-mapped 形式；
+ *  2. **本机某个网卡 IP** —— 局域网 / 移动端访问时浏览器 Host 的正常形态；
+ *  3. `trustedHosts` 名单：显式端口则精确匹配 `host:port`，无端口则任意端口
+ *     （与 DSH `isTrustedAuthority` 语义一致）。
+ *
+ * 第 2 类是本次修复的关键，也是唯一真正生效的闸门（见 trustedRequest 注释）。
+ * 它之所以安全：浏览器 Host 由 URL 决定，攻击者的域名无法同时做到
+ * 「Host 等于受害者本机 IP」和「页面来自攻击者域」——想做前者就必须把 URL
+ * 写成 IP，那就不再是 DNS-rebinding 了。
+ *
+ * @param hostname - Host 的主机名部分（已规范化）。
+ * @param port - Host 的端口部分（可为空）。
+ * @param trustedHosts - 额外受信权威名单。
+ */
+function isOwnDeploymentHost(hostname: string, port: string, trustedHosts: readonly string[]): boolean {
+  if (isLoopbackHostname(hostname)) return true
+  // IPv4-mapped IPv6 回环/字面量（::ffff:a.b.c.d）：归一后按 IPv4 再判一次。
+  const mapped = hostname.replace(/^::ffff:/, '')
+  if (mapped !== hostname && isLoopbackHostname(mapped)) return true
+  const localIps = localNonLoopbackIps()
+  if (localIps.has(hostname)) return true
+  if (mapped !== hostname && localIps.has(mapped)) return true
+  for (const entry of trustedHosts) {
+    const parsed = parseAuthority(entry)
+    if (parsed === undefined) continue
+    if (parsed.hostname !== hostname) continue
+    // 显式端口 = 精确匹配该 authority；无端口 = 任意端口。
+    if (parsed.port.length === 0 || parsed.port === port) return true
+  }
+  return false
+}
 
-  // 3. 带 Origin 时必须与 Host 同源（无 Origin 是浏览器同源 GET 的正常形态）。
-  const origin = req.headers.origin
-  if (typeof origin !== 'string' || origin.length === 0) return true
+/**
+ * Origin 是否与请求的 Host 同源。
+ *
+ * **严格对齐 DSH 的 `isSameAuthorityOrigin`**：比较 `host:port` 与协议，
+ * 而不是只比主机名。只比主机名会放过 `http://192.168.0.112:9999`
+ * 与 `https://192.168.0.112`（协议不同 = 混合内容/降级攻击的判据）。
+ *
+ * 回环别名（localhost / 127.0.0.1 / ::1）视为等价，避免本机访问的误伤。
+ *
+ * @param origin - 原始 Origin 头。
+ * @param hostname - 请求 Host 的主机名。
+ * @param port - 请求 Host 的端口。
+ * @returns 同源返回 true。
+ */
+export function isSameAuthorityOrigin(origin: string, hostname: string, port: string): boolean {
+  let originUrl: URL
   try {
-    return normalizeHostname(new URL(origin).hostname) === hostname
+    originUrl = new URL(origin)
   } catch {
     return false
   }
+  const protocol = originUrl.protocol.toLowerCase()
+  if (protocol !== 'http:' && protocol !== 'https:') return false
+  const originHostname = normalizeHostname(originUrl.hostname)
+  if (originHostname.length === 0) return false
+  if (!isLoopbackEquivalent(originHostname, hostname)) return false
+  // 回环别名之间不比较端口（127.0.0.1:3080 与 localhost:3080 指同一服务）；
+  // 非回环则要求 host:port 完全一致（默认端口按协议归一）。
+  if (isLoopbackHostname(originHostname)) return true
+  const originPort = originUrl.port.length > 0 ? originUrl.port : protocol === 'https:' ? '443' : '80'
+  const requestPort = port.length > 0 ? port : '80'
+  return originPort === requestPort
+}
+
+/**
+ * 请求是否可信。
+ *
+ * 判据（全部满足才可信）：
+ *  1. Host 属于本部署（见 isOwnDeploymentHost）；
+ *  2. 不携带 `Sec-Fetch-Site: cross-site`；
+ *  3. 若带 Origin，必须与 Host 同源（见 isSameAuthorityOrigin）。
+ *
+ * ### 为什么旧写法（Host/Origin 均为回环才放行）是错的
+ * 局域网 / 移动端经 LAN IP 访问时，浏览器 Host 是 `192.168.x.x:3080`，
+ * 永远不是回环 —— 只判回环会让全部 RPC 403，而 client 半的 ToggleButton
+ * 拿不到 /state 就 `return null`，表现为「局域网访问时按钮不显示」。
+ *
+ * ### 为什么不能只靠 Origin
+ * 浏览器对**同源 GET** 的 fetch 默认不发 Origin，「Origin 必须存在且同源」
+ * 会让正常请求被拒（实测：真实浏览器 fetch 全部 403）。
+ *
+ * ### 安全边界（重要）
+ * 部分部署（如本机 dsh-remote-mobile 的 compat 层）会在**每条 TCP 连接的
+ * 首个请求**上把 Origin 改写为 `127.0.0.1`、`Sec-Fetch-Site` 改写为
+ * `same-origin`。在这种环境下第 2、3 条会被上游洗白，**真正生效的只有
+ * 第 1 条「Host 属于本部署」**。因此 isLoopbackHostname / isOwnDeploymentHost
+ * 的严格性就是本插件唯一的安全水位，绝不能用前缀匹配这类宽松判定。
+ *
+ * ### 身份认证不在这里
+ * 设备认证由 DSH 上游负责（dsh-remote-mobile 的 token 门禁、
+ * dsh-client-connection 的 Cookie 鉴权）。这里只做来源（跨站 / DNS-rebinding）校验。
+ *
+ * @param req - 待校验的 HTTP 请求。
+ * @param trustedHosts - 额外受信权威名单（可为空，不影响本机与局域网访问）。
+ */
+export function trustedRequest(req: IncomingMessage, trustedHosts: readonly string[]): boolean {
+  const rawHost = req.headers.host
+  if (typeof rawHost !== 'string' || rawHost.length === 0) return false
+  const authority = parseAuthority(rawHost)
+  if (authority === undefined) return false
+
+  // 1. Host 必须属于本部署。
+  if (!isOwnDeploymentHost(authority.hostname, authority.port, trustedHosts)) return false
+
+  // 2. 跨站请求一律拒绝。
+  if (req.headers['sec-fetch-site'] === 'cross-site') return false
+
+  // 3. 带 Origin 时必须同源（无 Origin 是浏览器同源 GET 的正常形态）。
+  const origin = req.headers.origin
+  if (typeof origin !== 'string' || origin.length === 0) return true
+  return isSameAuthorityOrigin(origin, authority.hostname, authority.port)
 }
 
 /** 读取有上限的请求体。 */
@@ -306,7 +408,7 @@ async function handleTest(deps: BarkRpcDeps, res: ServerResponse): Promise<void>
  * 统一包装一个 handler：校验请求来源与方法，并兜住异常。
  * @param method - 该端点允许的 HTTP 方法。
  * @param run - 实际业务处理。
- * @param trustedHosts - DSH 部署声明的受信非回环权威（决定局域网 Host 是否可信）。
+ * @param readTrusted - 每请求现读的额外受信权威名单（上游插件可能晚于本插件注入）。
  */
 function wrap(
   method: 'GET' | 'POST',
@@ -336,26 +438,28 @@ function wrap(
   }
 }
 
+/** connection 服务的最小形状（只取 trustedHosts）。 */
+interface ConnectionLike {
+  trustedHosts?: unknown
+}
+
 /**
- * 读取 DSH 部署声明的受信非回环权威（`connection.trustedHosts`）。
+ * 从 `connection.trustedHosts` 取受信权威名单。
  *
- * 该数组是 DSH 自己的 Host/Origin 围栏（`isTrustedApiRequest`）所用的同一份名单，
- * 由 web profile 配置与 dsh-remote-mobile（把本机全部网卡 IP 注入进来）共同填充，
- * 因此局域网 IP 正在其中。fail-soft：connection 服务缺席或形状不符时返回空数组，
- * 此时仅回环请求可用（与旧行为一致），不会因读取失败而带崩插件。
+ * ### 为什么必须传入已 resolve 的服务对象
+ * Cordis 的 Context 是 Proxy：**未在 `inject` 中声明的服务，读 `ctx.connection`
+ * 会直接抛** `cannot get property "connection" without inject`（实测）。
+ * 早期实现直接在入口 ctx 上读并 try/catch，异常被吞 → 永远返回 `[]`，
+ * 「trustedHosts 分支」成了死代码。因此这里只接受**已经由
+ * `ctx.inject(['connection'], ...)` 解析出来的服务对象**（见 registerBarkRpc）。
  *
- * @param ctx - 插件上下文。
- * @returns 受信权威快照（每次请求读取，跟随上游注入动态变化）。
+ * @param connection - 已解析的 connection 服务（可为 undefined，表示该服务缺席）。
+ * @returns 受信权威名单；服务缺席或形状不符时返回空数组（此时仅回环 + 网卡 IP 可用）。
  */
-function readTrustedHosts(ctx: Context): readonly string[] {
-  try {
-    const connection = (ctx as unknown as { connection?: { trustedHosts?: unknown } }).connection
-    const hosts = connection?.trustedHosts
-    if (Array.isArray(hosts)) return hosts.filter((entry): entry is string => typeof entry === 'string')
-  } catch {
-    // 服务尚未就绪或不可读：退回仅回环策略。
-  }
-  return []
+function trustedHostsOf(connection: ConnectionLike | undefined): readonly string[] {
+  const hosts = connection?.trustedHosts
+  if (!Array.isArray(hosts)) return []
+  return hosts.filter((entry): entry is string => typeof entry === 'string')
 }
 
 /**
@@ -366,8 +470,19 @@ function readTrustedHosts(ctx: Context): readonly string[] {
  */
 export function registerBarkRpc(ctx: Context, deps: BarkRpcDeps): void {
   ctx.inject(['webServer'], (webCtx) => {
-    // 每次请求都重新读，以跟随上游（如 dsh-remote-mobile）后注入的网卡 IP。
-    const getTrustedHosts = (): readonly string[] => readTrustedHosts(ctx)
+    // 「每请求现读」的受信权威来源。
+    //
+    // connection 是**可选**依赖：本机/局域网访问不依赖它（见 isOwnDeploymentHost），
+    // 但自定义域名（trustedHosts 声明）依赖它。这里用闭包捕获解析后的服务对象，
+    // 而不是在入口 ctx 上读 —— Cordis 未 inject 时读服务会抛
+    // "cannot get property \"connection\" without inject"，被 catch 吞掉后名单恒为空，
+    // 分支成为死代码（上一版的真实缺陷）。嵌套 inject 让该服务缺席时路由照常可用。
+    let connection: ConnectionLike | undefined
+    webCtx.inject(['connection'], (connCtx) => {
+      connection = (connCtx as unknown as { connection?: ConnectionLike }).connection
+    })
+    const getTrustedHosts = (): readonly string[] => trustedHostsOf(connection)
+
     webCtx.effect(
       () => {
         // 0.1.7 对重复 (kind, path) 路由注册直接 throw：极端 HMR/重载时序下若旧 fiber 的
