@@ -1,12 +1,16 @@
 /**
  * dsh-session-notice —— 回合停止监听（核心逻辑，依赖注入以便单测）。
  *
- * 权威机制（本机 dsh 0.2.0-rc.2 源码复核，机制与 0.1.x 一致）：
+ * 权威机制（本机 dsh 0.2.0-rc.2 源码复核、0.2.2-rc.1 隔离实例真机复核，机制与 0.1.x 一致）：
  * - 回合结束必须以 `ctx.on('session/event')` 监听并按 `event.type === 'turn/end'`
  *   分派；`agent/turn-stopping` 只在自然收尾触发、会漏 abort/error；`ctx.on('turn/end')`
  *   永不触发；
  * - 最后文本：倒序扫 `session.snapshotEvents()` 取 `assistant/message` 的 text blocks
  *   （Session 类没有 `events` getter，参考插件那处写法在本机是 undefined）。
+ *   `snapshotEvents` 在 0.2.2 标注 `@deprecated`（平台收敛同步读事件写法），运行时
+ *   仍在且行为不变；本插件只在 `turn/end` 后一次性倒序取末条助手文本，不做热路径轮询，
+ *   且 0.2.2 生态活跃插件（dsh-notifier、dsh-better-sidebar）同样仍在用它。若后续
+ *   版本真的要移除，替代面是 `deriveMessages()`（折叠出的 LLM 历史）。
  * @module dsh-session-notice/event-listener
  */
 import { type BarkConfig, type BarkPushPayload, type PushVerdict } from './bark-service.js';

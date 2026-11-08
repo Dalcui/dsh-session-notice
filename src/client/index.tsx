@@ -14,13 +14,40 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-// Type-only：拉 ctx.slots 服务类型。
-import type {} from '@deepseek-ai/dsh-client-ui-slots'
+// Type-only：ctx.slots 的类型由 @deepseek-ai/dsh-client-ui-renderer 声明
+// （lib/types/client/index.d.ts 的 declare module '@deepseek-ai/cordis'）。
+// 旧写法 import type {} from 'dsh-client-ui-slots' 是**无效占位**：该包全套
+// .d.ts 里并没有 declare module '@deepseek-ai/cordis'，ctx.slots 根本不会由此
+// 获得 —— 直到本轮加入 client 半 typecheck 才暴露（此前 tsconfig exclude 了
+// src/client，这个文件从未被检查过）。type-only import 会被擦除，不产生模块请求，
+// 也**不需要**写进 dsh.client.inject（inject 只影响 bundle 物化顺序）。0.2.2 起
+// inject 从 ui-slots 改指 ui-renderer：ui-slots 已不是 boot graph 的运行时行
+// （退为 shell seed word），留在 inject 里永不生效；ui-renderer 是 slots 的
+// 运行时提供方且 immediately 预加载，指向它才是一条真实有效的到达顺序声明。
+// 下面三个 ./client 子路径只拉类型：SlotMap 是各宿主包用 declare module
+// '@deepseek-ai/cordis' 逐个合并的，本插件用到的两个 slot 名分属不同宿主 ——
+// 缺了任何一个，SlotMap 里就没有对应 key，typecheck 会报
+// '"plugins.bundle.config" is not assignable to "root"'。
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 
 import { BarkPluginCard, type RpcCall } from './BarkPluginCard'
 import { ToggleButton } from './ToggleButton'
 
-/** 与 Host 侧 rpc.ts 一致的路由前缀。 */
+/**
+ * 与 Host 侧 rpc.ts 一致的路由前缀。
+ *
+ * 命名空间耦合（0.2.2 复核）：`/plugins` 同时是 dsh-client-modules 的
+ * **prefix 路由**（PLUGIN_ROUTE，服务 `plugins/??<pkg>/client.js` 这类
+ * bundle/asset 请求）。本插件的 4 条是 **exact 路由**，而 dsh-host-webserver
+ * 的匹配顺序是 exact → 最长 prefix → fallback，因此 exact 恒胜、互不抢占
+ * （已在 0.2.2-rc.1 隔离实例实测：`/state` 回本插件 JSON，
+ * `plugins/??dsh-session-notice/client.js&rev=…` 仍由 client-modules 服务）。
+ * 若哪天部署改成子路径前缀，或上游把这些 asset 请求改成与本项目同名的 exact
+ * 路径，就需要把 RPC 迁到自有顶层命名空间（同 profile 里 dsh-service-status
+ * 用 `/dsh-service-status` 的做法）。
+ */
 export const ROUTE_PREFIX = '/plugins/dsh-session-notice'
 
 /** 必需服务：仅 slots（HTTP 走原生 fetch，不需要 connection 服务）。 */

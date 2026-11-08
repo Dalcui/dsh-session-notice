@@ -10,9 +10,9 @@ DSH（DeepSeek Harness）会话 Bark 通知插件：在会话界面点一个按�
 
 ## 安装
 
-> **版本要求**：适配 dsh **0.1.5 – 0.2.0-rc.2**。
+> **版本要求**：适配 dsh **0.1.5 – 0.2.2-rc.1**（本机 0.2.2-rc.1 实测通过）。
 >
-> - dsh **0.2.0** 起（本仓库 0.2.1 起）：插件需在 `peerDependencies` 声明兼容的 dsh 运行时版本，否则启动时被跳过加载（`Plugin ... is incompatible with dsh ...`）。本仓库已声明 `^0.1.5-rc.1 || ^0.1.7-rc.1 || ^0.2.0-rc.1`。dsh 0.2.0 **运行时**取消 cause 收敛为 `user/parent/disposed/hook`；**持久化**联合类型仍保留 `legacy`（无 cause 的 0.1.x 旧记录），本插件照常识别并归入「用户主动停止不通知」静默链。
+> - dsh **0.2.0** 起（本仓库 0.2.1 起）：插件需在 `peerDependencies` 声明兼容的 dsh 运行时版本，否则启动时被跳过加载（`Plugin ... is incompatible with dsh ...`）。本仓库已声明 `^0.1.5-rc.1 || ^0.1.7-rc.1 || ^0.2.0-rc.1 || ^0.2.2-rc.1`；门禁比较用 `includePrerelease`，故 `^0.2.0-rc.1` 在运行时侧已覆盖整个 0.2.x，追加 `^0.2.2-rc.1` 分支是为了让 `npm install` 把类型包解析到 0.2.2（默认 semver 解析不放行其他 tuple 的预发布版）。dsh 0.2.0 **运行时**取消 cause 收敛为 `user/parent/disposed/hook`；**持久化**联合类型仍保留 `legacy`（无 cause 的 0.1.x 旧记录），本插件照常识别并归入「用户主动停止不通知」静默链。
 > - dsh **0.1.7**（0.1.7-rc.2 起可用）：dsh-settings 重构（`settings.register` 移除，改为插件 `Config` 导出 + volatile 字段 + `ctx.settings.describe/update`；客户端设置入口从 `settings.plugin.item` 迁移到 `plugins.bundle.config`）。
 > - dsh **0.1.5** 及以下旧版请用本仓库 0.1.5 时代的历史提交。
 
@@ -58,6 +58,39 @@ dsh plugin --profile web add github:Dalcui/dsh-session-notice
 - **卡片样式**：`dsh-client-ui-settings-plugins` 不导出 `PluginCard`（跨插件值导入被纯度门禁禁止），故自写 CSS 复刻原生观感（`--dsw-alias-*` 主题变量、12px 圆角、34px 输入框、15/13 字号）。
 - **group 归一化**：trim + 去控制字符 + ≤40 字节；归一后为空则**省略字段**（`group:""` 会形成空名分组），超限回退 `<basename> · <sha1(cwd) 前 6>`。
 
+## 0.2.2 适配
+
+dsh 0.2.2-rc.1（本机实测，2026-11-08）。**结论：0.2.1/0.2.2 没有改动本插件 Host 侧用到的任何接缝，Host 逻辑零改动**；本版 = 验证性适配（依赖范围 + 文档 + 构建脚本修复）+ **client 侧三项修正**（下方第三条，属宿主侧缺陷与死声明，非 0.2.2 行为回归）。
+
+- **逐点复核（均与 0.2.0 一致）**：
+  - `ctx.settings.describe()` 不传 `redactSecrets` 时 `value` 仍是 Host 侧完整值（脱敏只在带参时发生）；`update(ns, patch)` 省略 `expectedRevision` 仍是无 CAS 的 merge 写入 profile patch，不抛 `SETTINGS_CONFLICT`；`ns` 仍是 profile entry id（`bark-notify`）。
+  - `webServer.register({ kind:'exact', path, handler })` 仍返回 disposer，重复 `(kind, path)` 仍抛错；匹配顺序 exact → 最长 prefix → fallback，本插件的 exact 路由不会被内置 `/plugins` 相关路由抢先。
+  - `session/event(session, event)`、`turn/end` 的 reason 全集（`completed/aborted/blocked/error/max-tokens/interrupted/forked`）与取消 cause（`user/parent/hook/disposed` + 持久化侧 `legacy`）未变，`assistant/message` 的 text block 形状未变。
+  - `Session.snapshotEvents()` 在 0.2.2 被标注 `@deprecated`（平台内部在收敛「同步读事件」写法），**运行时仍在且行为不变**；本插件只在 `turn/end` 后一次性倒序取末条助手文本，代价可控，且 0.2.2 生态里的活跃插件（dsh-notifier 0.2.11、dsh-better-sidebar 0.30.1）同样仍在用它，故保持不改。
+  - 客户端两个入口未变：`plugins.bundle.config`（keyed，key = npm 包名）与 `conversation.session.header.utilities`（list，standardProps 自带 `sessionId`）；`window.__ModuleLoader__.load({id, factory})` 懒 CJS 仍由 dsh-client-modules 支持。
+  - `dsh.client` 新增 `external` 字段（模块表的**精确**请求，即产物里真实 `require` 的包名；`package-manifest` 的注释把 `inject` 称信息性，但 `dsh-client-modules` 的 `arriveGraphRow` 实际会按 `inject` 里已存在的 graph 行先行到达 —— 所以 `inject` 是「到达顺序声明」，命中才生效、未命中静默跳过）。本产物实际只 `require('react')` 与 `require('react/jsx-runtime')`，两者都是 0.2.2 的 seed word，**无需新增 `external` 声明**。
+  - 兼容性门禁 `evaluatePluginCompatibility` 只看 `engines.dsh`（若有）或 `@deepseek-ai/dsh*` peer，比较带 `includePrerelease` —— 故 `^0.2.0-rc.1` 已覆盖 0.2.2-rc.1；本次追加 `^0.2.2-rc.1` 分支只为让 `npm install` 把类型包解析到 0.2.2（npm 默认解析不放行别的 tuple 的预发布版）。
+- **依赖范围**：`@deepseek-ai/cosmokit` 放宽为 `~1.8.5 || ~1.9.0`（0.2.2 运行时携带 1.9.0；本插件只用 `isVolatile`，契约未变）。cordis `^4.0.2` / schemastery `^3.18.2` 天然覆盖运行时的 4.1.0 / 3.19.0，无需改动。
+- **构建脚本修复**：`build.mjs` 不再经 `npx.cmd` 跑 tsc —— Node ≥ 24 在 Windows 上 `spawnSync('.cmd')` 直接 `EINVAL`（要求 shell），`npm run build` 因此整条断掉；改为解析本地 `typescript/bin/tsc` 后交给当前 node 执行，跨平台一致。
+- **client 侧三项修正（源码审计 + 运行时证据）**：
+  - **主题变量真 bug（与版本无关）**：`--dsw-alias-label-error` 在 0.2.2 主题里**不存在**（`dsh-client-ui-theme/lib/client.js` 的 216 条 alias 定义全文 0 命中），而卡片里两处失败文案（`.dsn-msgFailed` / `.dsn-testFailed`）一直在用它 —— 实际效果是继承常规色、不是红色。改为已存在的 `--dsw-alias-state-error-primary`（light/dark 各定义，指向 `static-red-600/400`）。
+  - **`dsh.client.inject` 死引用**：`@deepseek-ai/dsh-client-ui-slots` 在 0.2.2 已不是 boot graph 的运行时行（它变成 shell 的 seed word，`slots` 服务的提供方是 `@deepseek-ai/dsh-client-ui-renderer`；实测 `window.__DSH_BOOT__.entries` 74 行里有 ui-renderer / client-connection / client-modules，**没有** ui-slots）。未知名在 `arriveGraphRow` 里被静默跳过，所以此前只是白写；改为 `["@deepseek-ai/dsh-client-ui-renderer"]`，让「提供 slots 服务的 bundle 先到位」这条顺序声明真正生效。 `@deepseek-ai/dsh-client-connection` 我们从不在产物里 require（`lib/client.js` 只 require `react` 与 `react/jsx-runtime`，两者都是 0.2.2 的 seed word），一并删掉这层多余耦合。
+  - **卡片根元素**：宿主 0.2.2 把本槽渲染进 `section[data-plugin-config]`、外面**没有** `ul`，故根由 `<li>` 改为 `<div>`（语义修正，浏览器原本容错），并去掉随之无意义的 `list-style: none`。
+- **保持不动的一处（有意识的取舍）**：RPC 仍用 `/plugins/dsh-session-notice/*`。0.2.2 里 `/plugins` 是 dsh-client-modules 的 `PLUGIN_ROUTE`（**prefix** 路由，服务 `plugins/??<pkg>/client.js&rev=…`），与本插件 4 条 **exact** 路由同前缀共存；`dsh-host-webserver` 的匹配顺序是 exact → 最长 prefix → fallback，实测互不抢占。迁到自有顶层命名空间（如 profile 里 `dsh-service-status` 的做法）只在**上游把 `/plugins/dsh-session-notice/test` 这类路径也注册成同名 exact** 时才需要（改子路径前缀不影响 —— exact 恒胜 prefix），本轮先不动，避免引入未经真机回归的行为变更 —— 边界条件已写进 `src/rpc.ts` 与 `src/client/index.tsx` 的 `ROUTE_PREFIX` 注释。
+- **信任链水位（0.2.2 复核后写清，免得误读）**：本插件 `trustedRequest` 只是纵深防御的一层。若上游装了会改写请求头的插件（本机是 dsh-remote-mobile），它用宽松 `/^127\./` 判「本地变体」，`Host: 127.evil.com` 会先被洗成 `127.0.0.1` 再交给本插件 —— 插件侧拦不住（上游缺陷，已建议上报）；而真实的局域网 / 移动端访问由它的设备认证把关（未配对设备 401，到不了本插件路由）。因此「装了什么上游」决定实际水位，路由挪不挪出 `/plugins` 都不改变这一点。
+- **未采纳的增强**：再注册 `plugins.row.config`（key = `dsh-session-notice#bark-notify`）让用户从 bundle 页点进 **row** 详情页也能看到配置入口。这个槽 0.2.0-rc.2 起就已存在（我复核了该版本的 `dsh-client-ui-plugin-manager` 产物，`plugins.row.config` 一直在槽清单里），我们从未注册 —— 属**可选增强**，不是任何版本破坏面，本轮不做。
+- **验证方法（隔离实例，真机）**：独立 `DSH_HOME` + `--from-default-profile web` 建 `notice-test` profile，`dsh plugin add link:` 本仓库，起在 3081 端口：
+  1. `GET /state` 返回 schema 默认值（证明 `Config` 导出 + `describe()` 通道可用）；
+  2. `POST /toggle` → profile patch 里 `bark-notify.config.enabledSessions` 落盘；
+  3. `Sec-Fetch-Site: cross-site` → 403；错误方法 → 405；
+  4. 浏览器插件管理页 → 本插件详情页卡片渲染并正确回填（`group=probe-group`、`maxBodyChars=300`、key 只回显末 4 位），控制台零报错；
+  5. 会话头部铃铛渲染 + 点击开启（`aria-pressed=true`，`/state` 随即包含该会话 id）；
+  6. 真实失败回合（无模型凭据 → `turn/end reason.kind=error`）→ 本地 Bark 桩收到 `POST /push`，body 含完整错误原因与 `code=MISSING_CREDENTIAL`，即事件 → 组装 → 发送全链路可用。
+  7. client 修正后复验：卡片渲染进 `section[data-plugin-config]`、失败文案计算色为红色、铃铛 toggle 与 `/state` 一致、控制台零报错。
+  另：`npm test` **115/115 全绿**（把 `C:\Program Files\Git\usr\bin` 加进 PATH 让 `openssl` 可用后整跑一次，含 direct-fetch 的 16 例）；`npm run typecheck`（Host 半）与 **`npm run typecheck:client`（浏览器半，本轮新增）双双通过**。
+- **client 半 typecheck 首次闭环（本轮补的盲区）**：`tsconfig.json` 一直 `exclude` 了 `src/client`，浏览器半此前**从未被类型检查过**。新增 `tsconfig.client.json`（Bundler 解析 + DOM lib）与 `npm run typecheck:client`。首跑暴露两点：① 旧写法 `import type {} from 'dsh-client-ui-slots'` 是**无效占位** —— 该包全套 `.d.ts` 里没有 `declare module '@deepseek-ai/cordis'`，`ctx.slots` 根本不会由此获得；② `SlotMap` 的 key 由各宿主包用 `declare module` 逐个合并，本插件用到的两个 slot 名分属 `dsh-client-ui-plugin-manager`（`plugins.bundle.config`）与 `dsh-client-ui-conversation`（`conversation.session.header.utilities`），必须把这几个宿主的 `./client` 子路径 type-import 进来 SlotMap 才完整。现已全绿，且 `ctx.slots` 类型真的到位了。
+- **已知环境性缺口（不是代码问题）**：`tests/direct-fetch.test.mjs` 的两个 HTTPS 用例要用 `openssl` 现生成自签证书。本机默认 `PATH` 里没有它 → `spawnSync openssl ENOENT`、`npm test` 报 113/115；把 Git 自带的 `C:\Program Files\Git\usr\bin` 加进 `PATH` 后 16/16 通过、整跑 115/115 全绿（已实测）。CI/新机器同样按这条处理。
+
 ## 0.2.0 适配说明
 
 dsh 0.2.0-rc.2（本机实测，2026-09-30）：
@@ -80,10 +113,11 @@ dsh-settings 0.1.7 重构了插件设置契约（本机 0.1.7-rc.2 实测）：
 ## 开发
 
 ```bash
-npm install --legacy-peer-deps   # 类型检查所需 @deepseek-ai/* 从本机 DSH/profile 链接
+npm install                    # 根 peerDependencies 会被自动装上，类型检查所需 @deepseek-ai/* 即来自这里（0.2.2 运行时对齐 0.2.2-rc.1 / cordis 4.1.0 / cosmokit 1.9.0 / schemastery 3.19.0）
 npm run build                    # tsc（Host 半）+ esbuild（浏览器半 → lib/client.js）
-npm test                         # node:test（100 用例：纯函数 + 有状态 mock + 假接线）
-npm run typecheck
+npm test                         # node:test（115 用例：纯函数 + 有状态 mock + 假接线；HTTPS 两例需 PATH 上有 openssl，Git 自带于 C:\Program Files\Git\usr\bin）
+npm run typecheck                # Host 半（tsconfig.json；exclude src/client）
+npm run typecheck:client         # 浏览器半（tsconfig.client.json；Bundler 解析 + DOM lib）
 ```
 
 > 本地 typecheck 需把 `@deepseek-ai/*` 类型包软链进 `node_modules`（它们随 DSH 安装提供，不在公共 registry）。

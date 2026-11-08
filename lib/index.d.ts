@@ -17,6 +17,15 @@
  * 新增的插件 peerDependencies 版本门禁（dsh-app-boot evaluatePluginCompatibility），
  * 在 package.json peerDeps 增加 ^0.2.0-rc.1 行解决。
  *
+ * 0.2.2 兼容性（本机 0.2.2-rc.1 源码 + 隔离实例真机复核，同样零代码改动）：
+ * describe() 不带 redactSecrets 仍回完整值、update(ns, patch) 省略 expectedRevision
+ * 仍是无 CAS 的 merge；webServer exact 路由匹配顺序仍为 exact → 最长 prefix →
+ * fallback，重复 (kind, path) 仍抛；turn/end reason 与取消 cause 全集未变；
+ * slots 两入口与 __ModuleLoader__ 懒 CJS 未变（dsh.client 新增的 external 字段
+ * 本产物用不到，只 require react 与 react/jsx-runtime，已在基线 externals 内）。
+ * 门禁比较带 includePrerelease，^0.2.0-rc.1 已覆盖 0.2.2，peerDeps 追加
+ * ^0.2.2-rc.1 分支只为让 npm install 把类型包解析到 0.2.2。
+ *
  * 0.1.5→0.1.7 适配要点（本机 0.1.7-rc.2 源码验证）：
  * - ctx.settings.register(ns, schema, { base, applies }) 已移除；改为导出
  *   Config（含 volatile 字段）+ ctx.settings.describe()/update(ns, patch)；

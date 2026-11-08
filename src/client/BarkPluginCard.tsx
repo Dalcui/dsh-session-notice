@@ -6,7 +6,7 @@
  * 无 summary 分支）。本组件仍走 Host 自建
  * HTTP RPC（/plugins/dsh-session-notice/*），不使用 owner 传入的 form 通道。
  *
- * 样式与 DSH 内置及其它插件卡片保持一致：`li` 卡片 + `--dsw-alias-*` 主题变量
+ * 样式与 DSH 内置及其它插件卡片保持一致：卡片盒 + `--dsw-alias-*` 主题变量
  * （border-l2 / bg-layer-3 / brand-primary / label-* ），header 折叠 + body 字段
  * + footer 保存，圆角 12px、input 34px、字号 13/15（与 dsh-auto-collapse 同款）。
  *
@@ -50,7 +50,6 @@ const CARD_CSS = `
   border: 1px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-layer-3);
   border-radius: 12px;
-  list-style: none;
   transition: border-color .16s, background .16s;
 }
 .dsn-card:hover { border-color: var(--dsw-alias-label-dimmed); }
@@ -93,7 +92,7 @@ const CARD_CSS = `
 .dsn-footer { border-top: 1px solid var(--dsw-alias-border-l2); justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 0 4px; display: flex; }
 .dsn-msg { min-width: 0; flex: 1; margin: 0; font-size: 12px; line-height: 1.5; }
 .dsn-msgOk { color: var(--dsw-alias-label-secondary); }
-.dsn-msgFailed { color: var(--dsw-alias-label-error); }
+.dsn-msgFailed { color: var(--dsw-alias-state-error-primary); }
 .dsn-btn { appearance: none; font: inherit; cursor: pointer; border: 1px solid #0000; border-radius: 8px; padding: 5px 14px; font-size: 13px; line-height: 1.5; }
 .dsn-btnSecondary { border-color: var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); background: 0 0; }
 .dsn-btnSecondary:hover:not(:disabled) { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-label-dimmed); }
@@ -102,7 +101,7 @@ const CARD_CSS = `
 .dsn-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .dsn-testResult { flex-direction: column; gap: 4px; margin: 0 0 8px; font-size: 12px; line-height: 1.5; display: flex; }
 .dsn-testOk { color: var(--dsw-alias-label-secondary); }
-.dsn-testFailed { color: var(--dsw-alias-label-error); }
+.dsn-testFailed { color: var(--dsw-alias-state-error-primary); }
 .dsn-ready { color: var(--dsw-alias-label-primary); font-weight: 600; }
 `
 
@@ -133,6 +132,13 @@ function ChevronIcon(open: boolean): ReactElement {
 /**
  * 插件配置页（plugins.bundle.config 的 page 视图；owner 仅以 page 渲染）。
  * 数据全部走 Host HTTP RPC，不使用 owner 传入的 form 通道。
+ *
+ * 根元素用 div：宿主（dsh-client-ui-plugin-manager）从 0.2.0-rc.2 起就把本槽
+ * 渲染进 `section[data-plugin-config]`，外面**没有** `ul` 包裹。旧的 `<li>`
+ * 是历史上跟着官方列表卡片写的语义错误（浏览器容错，不影响渲染），本次一并
+ * 修正 —— 属自 0.2.0 起就存在的既有问题，不是 0.2.2 引入的结构变化。
+ * 失败文案颜色用 `--dsw-alias-state-error-primary`：主题 alias 表里
+ * **没有** `--dsw-alias-label-error`（写它的地方此前实际继承的是常规色）。
  */
 export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
   const [view, setView] = useState<SettingsView | null>(null)
@@ -238,7 +244,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
   const cardClass = `dsn-card${open ? ' dsn-cardOpen' : ''}`
 
   return (
-    <li className={cardClass}>
+    <div className={cardClass}>
       <button
         type="button"
         className="dsn-header"
@@ -396,6 +402,6 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
           <p className="dsn-hint">「测试推送」会真发一条通知到手机（ping → push → 失败才 register），请在手机上确认</p>
         </div>
       ) : null}
-    </li>
+    </div>
   )
 }

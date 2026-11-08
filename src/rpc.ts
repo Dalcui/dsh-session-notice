@@ -25,7 +25,14 @@ import { DEFAULT_SERVER, runConnectivityTest, weakKeyCheck, type BarkConfig } fr
 import { BODY_CHARS_MAX, BODY_CHARS_MIN } from './constants.js'
 import { maskKey, maskServer, type BarkSettings } from './settings-store.js'
 
-/** 本插件路由前缀（与 client 半 fetch 的路径一致）。 */
+/**
+ * 本插件路由前缀（与 client 半 fetch 的路径一致）。
+ *
+ * 与 dsh-client-modules 的 PLUGIN_ROUTE(`/plugins`，prefix) 同名共存：
+ * dsh-host-webserver 按 exact → 最长 prefix → fallback 匹配，本插件 4 条
+ * 都是 exact，故恒由本插件应答（0.2.2-rc.1 隔离实例实测通过）。
+ * 迁移到自有顶层命名空间的触发条件见 src/client/index.tsx 的同名常量注释。
+ */
 export const ROUTE_PREFIX = '/plugins/dsh-session-notice'
 
 /** 请求体上限（配置字段都很小）。 */
@@ -263,6 +270,15 @@ export function isSameAuthorityOrigin(origin: string, hostname: string, port: st
  * 因此 isLoopbackHostname / isOwnDeploymentHost 的严格性决定了本插件在
  * 「外部直连」形态下的安全水位，绝不能用前缀匹配这类宽松判定
  * （历史缺陷：`/^127\./` 曾把 `127.evil.com` 判为回环）。
+ *
+ * ### 诚实边界：本闸门不是部署里的唯一闸门（0.2.2 复核）
+ * 上面第 1 条只在「请求头没被上游改写过」的前提下才有意义。若 profile 里装了
+ * 会改写请求头的上游（本机是第三方 dsh-remote-mobile）：它判定「本地变体」用的是
+ * 宽松前缀 `/^127\./`，于是 `Host: 127.evil.com` 会先被它洗成 `127.0.0.1` 再交给
+ * 我们 —— 本插件侧**无法**拦截（到达时已是合法回环字面量），属上游缺陷。
+ * 反过来，真正的局域网/Tailscale 访问由它的设备认证把关（未配对设备拿到的是
+ * 401，压根到不了我们的路由）。结论：本插件的 trustedRequest 是**纵深防御的一层**，
+ * 不能替代部署级认证；把路由挪出 `/plugins` 命名空间也不会改变这一水位。
  *
  * ### 身份认证不在这里
  * 设备认证由 DSH 上游负责（dsh-remote-mobile 的 token 门禁、
