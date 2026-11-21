@@ -5,6 +5,7 @@ DSH（DeepSeek Harness）会话 Bark 通知插件：在会话界面点一个按�
 - **正常结束** → 推送最后一条文本消息（长文按「首段 + 末段」摘要）
 - **异常停止**（出错 / 被阻塞 / Token 上限 / 崩溃遗留 / 钩子中止）→ 推送**完整错误内容**（不按正文那样摘要截取）与必要信息
 - **你主动点「停止」不通知**（aborted 且 cause 为 user/parent/disposed 等中止链，含主会话停止时级联到 subagent 的 parent 中止）
+- **需要你介入时也通知**（独立开关，默认开，**不受会话级开关限制**）：等待工具/沙箱审批、模型 `ask_user_question` 提问、以及 timed 提问超时后仍待回答；第三种会把误导性的「✅ 完成」改写为「⏳ 等待回答」
 - 开关**按会话独立**、持久化（服务重启后保持），随时可切换
 - 插件管理页本插件详情页配置 Bark `server` / `key`，并提供 ping → push → register 三步连通测试（dsh ≥ 0.1.7；0.1.5 为「设置 → 插件配置区」卡片）
 
@@ -42,11 +43,17 @@ dsh plugin --profile web add github:Dalcui/dsh-session-notice
 | 设备密钥 | 空 | Bark App 内查看；`role('secret')`，只回显末 4 位 |
 | 分组（group） | 空 = 按工作区 | 手机通知按项目聚合、支持按分组静音 |
 | 正文摘要字数 | 200 | 通知只显示约 4 行，超出按「首段 + 末段」摘要并标注总字数；范围 40–1000 |
+| 人工介入提醒 | 开 | 等待工具/沙箱审批、模型 `ask_user_question` 提问、提问超时后仍待回答时也推送；**独立于**会话头部的「会通知」开关（需要你介入时通常已离开屏幕，这类提醒对所有会话生效） |
 
 ## 实现要点
 
 - **回合结束监听**：Host 侧 `ctx.on('session/event')` 按 `event.type === 'turn/end'` 分派，完整区分六种停止原因（`agent/turn-stopping` 只自然收尾触发、会漏异常路径，故不采用）。**主会话等待 subagent 返回时不会误通知**——subagent 调用是未完成的工具调用，回合不结束即不写 `turn/end`；只有真正收尾才推一条汇总。
 - **用户主动停止不通知**：`aborted` 且 cause 属 user/parent/disposed（含 cause 缺失的历史事件）保持沉默——停止是用户自己按的，通知只会打扰；主会话被停时其 subagent 收到的是 parent 级联中止，同样静默（防一次点击多条轰炸）。`hook`（自动化策略终止，附 reason 文案）保留推送。
+- **人工介入提醒（与回合结束通知互补的三条通道）**——有些需要人介入的时刻回合并没有结束，`turn/end` 永远不会发出，必须另找监听面：
+  - **等待审批**：监听 `session/event` 的 `approval/asked`（log-only audit 事件；`dsh-user-approval` 在请求发出时先 append、随后才 `await decide()` 阻塞等批准，且**无等待超时**）。按会话日志里最后一次 `approval/policy` 判定策略：`never` 会话里审批会被自动拒绝、无人等待，不推（避免「假批准」误导）。
+  - **等待回答**：监听 cordis waterfall `user-questions/request`（每次 `ask_user_question` 必经；legacy 阻塞式与 timed 首次发问都走它）。**只旁观、绝不认领**——无论发生什么都 `next()` 交还决策，自身异常一律吞掉，不干扰真正的答案器。
+  - **提问超时兜底**：timed 模式超时会以 `{pending:true}` 正常工具结果收尾、回合照常结束并写 `turn/end completed`（原本会推误导性的「✅ 完成」）。两处协同：① `turn/end` 时倒序折叠会话事件检测未答问题，把意图改写为「⏳ 等待回答」；② 订阅 `sessionProjections` 的 `userQuestions` 投影，`state === 'continued'` 且**回合已结束**时兜底提醒（覆盖崩溃恢复后 repair 合成的 unknown-outcome 结果）。两者共用同一 `session:callId` 账本，同一问题只提醒一次。
+  - 三条通道的推送**不受** `enabledSessions` 限制，由独立设置 `interventionNotify`（默认开）统一控制；key 未配置时静默。
 - **正文双层预算**：
   - *展示层* —— 仅**正常完成**时对正文做默认 200 字摘要（方案 C：首段 + 末段，跳过代码块，按码点不劈 emoji），超出缀「（共 N 字）」。因为 iOS 横幅约 4 行（≈80–120 中文字），全量塞入既看不全又笨重。**异常停止**不做展示层摘要，错误内容完整保留（仅协议层字节闸门兜底）。
   - *协议层* —— 整包 JSON ≤ **3900 字节**（同时满足 nginx 8192B 与 APNs 4096B），`truncateByBytes` 按码点兜底。

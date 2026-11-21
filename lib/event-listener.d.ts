@@ -14,6 +14,7 @@
  * @module dsh-session-notice/event-listener
  */
 import { type BarkConfig, type BarkPushPayload, type PushVerdict } from './bark-service.js';
+import { type PendingQuestion } from './intervention.js';
 /** 与 dsh-session 的 Session 兼容的最小形状（运行时不 import DSH 包）。 */
 export interface SessionLike {
     id: string;
@@ -62,6 +63,15 @@ export interface TurnEndHandlerDeps {
     getConfig(session: SessionLike): BarkConfig | null;
     /** 投递一条组装好的 payload；返回分类判定（conf 由闭包绑定）。 */
     deliver(payload: BarkPushPayload): Promise<PushVerdict>;
+    /**
+     * 该会话是否存在「回合已结束但提问仍未回答」的 timed 挂起问题。
+     *
+     * timed 模式下提问超时会以 `{pending:true}` 正常工具结果收尾，回合**照常
+     * 结束**并写 turn/end completed —— 不修正就会推一条误导性的「✅ 完成」。
+     * 返回非 null 时把 completed 意图改写为「⏳ 等待回答」。缺省（不注入）时
+     * 保持原行为，便于旧测试与无投影环境。
+     */
+    pendingQuestion?(session: SessionLike): PendingQuestion | null;
     /** 会话 Web 地址（点击通知跳回会话）。 */
     sessionUrl?(sessionId: string): string | undefined;
     /** 警告日志（脱敏后）。 */

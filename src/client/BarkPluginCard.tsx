@@ -35,6 +35,8 @@ interface SettingsView {
   group: string
   enabledSessions: string[]
   maxBodyChars: number
+  /** 人工介入提醒开关（默认开，独立于会话级「回合结束」开关）。 */
+  interventionNotify: boolean
 }
 
 /** `/test` 端点返回的三步结果。 */
@@ -89,6 +91,9 @@ const CARD_CSS = `
 .dsn-input:focus-visible { border-color: var(--dsw-alias-brand-primary); outline: none; }
 .dsn-input:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 .dsn-hint { color: var(--dsw-alias-label-tertiary); margin: 0; font-size: 12px; line-height: 1.5; }
+.dsn-check { align-items: center; gap: 8px; color: var(--dsw-alias-label-primary); cursor: pointer; font-size: 13px; line-height: 1.5; display: flex; padding: 2px 0; }
+.dsn-check input { accent-color: var(--dsw-alias-brand-primary); width: 15px; height: 15px; margin: 0; cursor: pointer; }
+.dsn-check input:disabled { cursor: default; }
 .dsn-footer { border-top: 1px solid var(--dsw-alias-border-l2); justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 0 4px; display: flex; }
 .dsn-msg { min-width: 0; flex: 1; margin: 0; font-size: 12px; line-height: 1.5; }
 .dsn-msgOk { color: var(--dsw-alias-label-secondary); }
@@ -147,6 +152,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
   const [keyDraft, setKeyDraft] = useState('')
   const [group, setGroup] = useState('')
   const [bodyChars, setBodyChars] = useState('200')
+  const [interventionNotify, setInterventionNotify] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [testing, setTesting] = useState(false)
@@ -172,6 +178,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     setServer(value.serverMasked === true ? '' : value.server)
     setGroup(value.group)
     setBodyChars(String(value.maxBodyChars ?? 200))
+    setInterventionNotify(value.interventionNotify !== false)
     setKeyDraft('')
     setLoadError('')
   }
@@ -193,6 +200,9 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     }
     if (keyDraft.length > 0) patch.key = keyDraft
     if (group !== (view?.group ?? '')) patch.group = group
+    if (interventionNotify !== (view?.interventionNotify !== false)) {
+      ;(patch as Record<string, string | number | boolean>).interventionNotify = interventionNotify
+    }
     const charsNumber = Number(bodyChars.trim())
     if (Number.isFinite(charsNumber) && Math.floor(charsNumber) !== (view?.maxBodyChars ?? 200)) {
       ;(patch as Record<string, string | number>).maxBodyChars = Math.floor(charsNumber)
@@ -240,6 +250,7 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
     serverDirty ||
     keyDraft.length > 0 ||
     group !== (view?.group ?? '') ||
+    interventionNotify !== (view?.interventionNotify !== false) ||
     (Number.isFinite(Number(bodyChars.trim())) && Math.floor(Number(bodyChars.trim())) !== (view?.maxBodyChars ?? 200))
   const cardClass = `dsn-card${open ? ' dsn-cardOpen' : ''}`
 
@@ -362,6 +373,30 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
             />
             <p className="dsn-hint">
               通知只显示约 4 行，超出按「首段 + 末段」摘要并标注总字数；范围 40–1000
+            </p>
+          </div>
+
+          <div className="dsn-field">
+            <div className="dsn-fieldHead">
+              <label className="dsn-fieldLabel" htmlFor="dsn-intervention">
+                人工介入提醒
+              </label>
+              <span className="dsn-badges">
+                <span className="dsn-badge">{interventionNotify ? '开' : '关'}</span>
+              </span>
+            </div>
+            <label className="dsn-check" htmlFor="dsn-intervention">
+              <input
+                id="dsn-intervention"
+                type="checkbox"
+                checked={interventionNotify}
+                disabled={saving || testing}
+                onChange={(event) => setInterventionNotify(event.target.checked)}
+              />
+              <span>等待批准 / 模型提问 / 提问超时未答时也推送</span>
+            </label>
+            <p className="dsn-hint">
+              独立于会话头部的「会通知」开关：需要你介入时通常已离开屏幕，这类提醒对所有会话生效；关掉后只推送回合结束通知
             </p>
           </div>
 

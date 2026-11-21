@@ -29,7 +29,7 @@ export declare const GROUP_BUDGET_BYTES = 40;
 /** 折叠 id = sha1(sessionId|turn) 前 16 位 hex（≤64B ASCII，apns-collapse-id 头）。 */
 export declare const COLLAPSE_ID_HEX_LEN = 16;
 /** 固定 UA（官方 BAN 规则：>5 次错误且 UA 恰为 Mozilla/5.0 (X11; Linux x86_64) 即封 24h）。 */
-export declare const USER_AGENT = "dsh-bark-notify/0.1.0";
+export declare const USER_AGENT = "dsh-bark-notify/0.3.0";
 /** 客户端超时（服务端 read/write timeout 默认 3s < APNs 往返；超时=结果不确定、不重试）。 */
 export declare const TIMEOUT_MS = 8000;
 /** Bark 官方服务器默认值。 */

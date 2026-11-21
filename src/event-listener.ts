@@ -15,7 +15,8 @@
  */
 
 import { type BarkConfig, type BarkPushPayload, type PushVerdict, composePushPayload, MAX_REQUEST_BYTES } from './bark-service.js'
-import { composeBody, intentOfTurnEnd } from './intent.js'
+import { pendingQuestionIntent, type PendingQuestion } from './intervention.js'
+import { composeBody, intentOfTurnEnd, type NotificationIntent } from './intent.js'
 
 /** 与 dsh-session 的 Session 兼容的最小形状（运行时不 import DSH 包）。 */
 export interface SessionLike {
@@ -80,6 +81,15 @@ export interface TurnEndHandlerDeps {
   getConfig(session: SessionLike): BarkConfig | null
   /** 投递一条组装好的 payload；返回分类判定（conf 由闭包绑定）。 */
   deliver(payload: BarkPushPayload): Promise<PushVerdict>
+  /**
+   * 该会话是否存在「回合已结束但提问仍未回答」的 timed 挂起问题。
+   *
+   * timed 模式下提问超时会以 `{pending:true}` 正常工具结果收尾，回合**照常
+   * 结束**并写 turn/end completed —— 不修正就会推一条误导性的「✅ 完成」。
+   * 返回非 null 时把 completed 意图改写为「⏳ 等待回答」。缺省（不注入）时
+   * 保持原行为，便于旧测试与无投影环境。
+   */
+  pendingQuestion?(session: SessionLike): PendingQuestion | null
   /** 会话 Web 地址（点击通知跳回会话）。 */
   sessionUrl?(sessionId: string): string | undefined
   /** 警告日志（脱敏后）。 */
@@ -101,12 +111,19 @@ export function createTurnEndHandler(deps: TurnEndHandlerDeps): (session: Sessio
     if (reason === undefined) return
     const intent = intentOfTurnEnd(reason)
     if (intent === null) return
+    // 人性化修正：回合「正常完成」但仍有 timed 提问挂起等待回答时，
+    // 「✅ 完成」是误导 —— 改推「⏳ 等待回答」（见 deps.pendingQuestion）。
+    let decided: NotificationIntent = intent
+    if (intent.kind === 'completed' && deps.pendingQuestion !== undefined) {
+      const pending = deps.pendingQuestion(session)
+      if (pending !== null) decided = pendingQuestionIntent(pending)
+    }
     // dedup 放在所有前置检查之后：禁用/未配置期间的 seq 不消耗记账，
     // 之后再开启时同一轮次的首次处理仍能推送。
     if (!dedup.test(`${session.id}:${event.seq ?? -1}`)) return
     const lastText = lastAssistantText(session)
-    const draft = composeBody(intent, lastText)
-    const { payload, bytes } = composePushPayload(conf, intent, draft.body, draft.totalChars, {
+    const draft = composeBody(decided, lastText)
+    const { payload, bytes } = composePushPayload(conf, decided, draft.body, draft.totalChars, {
       sessionId: session.id,
       // turn 缺失时省略 id（避免与 turn=0 碰撞产生错误折叠）。
       turn: typeof event.data?.turn === 'number' ? event.data.turn : undefined,

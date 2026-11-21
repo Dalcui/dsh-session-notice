@@ -47,8 +47,20 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 
 import { isVolatile } from '@deepseek-ai/cosmokit'
 
-import { sendPush } from './bark-service.js'
-import { createTurnEndHandler, type SessionLike } from './event-listener.js'
+import { composePushPayload, sendPush } from './bark-service.js'
+import { createDedupLedger, createTurnEndHandler, type SessionLike } from './event-listener.js'
+import {
+  approvalIntent,
+  approvalPolicyOf,
+  findPendingQuestion,
+  pendingQuestionIntent,
+  questionIntent,
+  summarizeQuestions,
+  type ApprovalAskedLike,
+  type QuestionRequestLike,
+  type SessionEventLike,
+} from './intervention.js'
+import type { NotificationIntent } from './intent.js'
 import { registerBarkRpc } from './rpc.js'
 import { barkSettingsSchema, DEFAULT_SETTINGS, SETTINGS_NAMESPACE, type BarkSettings } from './settings-store.js'
 
@@ -130,7 +142,7 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
   }
 
   /** merge 写入 profile patch（dsh-settings 0.1.7；不整段 replace，防清空密钥）。 */
-  const persist = async (patch: Partial<Pick<BarkSettings, 'server' | 'key' | 'group' | 'enabledSessions' | 'maxBodyChars'>>): Promise<void> => {
+  const persist = async (patch: Partial<Pick<BarkSettings, 'server' | 'key' | 'group' | 'enabledSessions' | 'maxBodyChars' | 'interventionNotify'>>): Promise<void> => {
     await ctx.settings.update(SETTINGS_NAMESPACE, patch)
   }
 
@@ -181,12 +193,11 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
     },
   })
 
-  const handler = createTurnEndHandler({
-    isEnabled: (sessionId) => current().enabledSessions.includes(sessionId),
-    getConfig: (session: SessionLike) => toConfig(current(), session.header?.cwd),
-    deliver: (payload) => {
-      const settings = current()
-      return sendPush(
+  /** 发送一条推送；失败只告警，绝不影响宿主流程。 */
+  const deliverPayload = async (payload: Parameters<typeof sendPush>[1]): Promise<Awaited<ReturnType<typeof sendPush>>> => {
+    const settings = current()
+    try {
+      const verdict = await sendPush(
         {
           server: settings.server,
           key: settings.key,
@@ -195,8 +206,163 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
         },
         payload,
       )
+      if (!verdict.ok) ctx.logger.warn(`[bark-notify] 推送未成功（${verdict.kind}）：${verdict.message}`)
+      return verdict
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      ctx.logger.warn(`[bark-notify] 推送异常：${message}`)
+      return { ok: false, kind: 'network', message }
+    }
+  }
+
+  /**
+   * 人工介入提醒的统一出口（审批 / 提问 / timed 挂起）。
+   *
+   * 与「回合结束通知」的区别（有意设计）：**不受 `enabledSessions` 约束**。
+   * 需要你介入时你通常已经离开屏幕，而这类提醒的全部价值就是「别漏掉」；
+   * 由独立的 `interventionNotify`（默认开）统一开关。key 未配置时静默。
+   */
+  const pushIntervention = (sessionId: string | undefined, intent: NotificationIntent): void => {
+    if (!current().interventionNotify || current().key.trim().length === 0) return
+    const settings = current()
+    const conf = {
+      server: settings.server,
+      key: settings.key,
+      group: settings.group,
+      cwd: workspaceCwd(),
+      maxBodyChars: settings.maxBodyChars,
+    }
+    const body = intent.headline
+    const { payload, bytes } = composePushPayload(conf, intent, body, [...body].length, {
+      ...(sessionId === undefined ? {} : { sessionId }),
+    })
+    if (payload === null) {
+      ctx.logger.warn(`[bark-notify] 人工介入提醒整包 ${bytes} 字节超过上限，已放弃`)
+      return
+    }
+    void deliverPayload(payload)
+  }
+
+  // 三类介入提醒各有独立去重账本（每会话:id 一条，24h 窗口 + LRU）。
+  const approvalDedup = createDedupLedger()
+  const questionDedup = createDedupLedger()
+  /** 「提问仍未回答」总账本：onChanged 与 turn/end 改写共用，保证同一问题只提醒一次。 */
+  const pendingNoticeDedup = createDedupLedger()
+
+  /**
+   * 每个会话当前是否有回合在跑（turn/start 置真、turn/end 置假）。
+   * 用于区分「提问超时但回合仍在继续」与「回合已结束但问题仍未回答」——
+   * 前者由回合结束时的 turn/end 改写提醒，后者才是投影兜底的独立信号。
+   */
+  const runningTurns = new Map<string, boolean>()
+
+  /** `approval/asked`：审批请求一经写入即提醒（之后才阻塞等批准，且无等待超时）。 */
+  const handleApprovalAsked = (session: SessionLike, event: SessionEventLike): void => {
+    if (event.type !== 'approval/asked') return
+    if (!current().interventionNotify) return
+    if (approvalPolicyOf(session.snapshotEvents() as unknown as readonly { type?: string; data?: { policy?: string } }[]) === 'never') return
+    const id = event.data?.id ?? `seq:${event.seq ?? -1}`
+    if (!approvalDedup.test(`${session.id}:${id}`)) return
+    pushIntervention(session.id, approvalIntent(event as ApprovalAskedLike))
+  }
+
+  const turnEndHandler = createTurnEndHandler({
+    isEnabled: (sessionId) => current().enabledSessions.includes(sessionId),
+    getConfig: (session: SessionLike) => toConfig(current(), session.header?.cwd),
+    deliver: (payload) => deliverPayload(payload),
+    // 回合「正常完成」但仍有 timed 提问挂起时，改推「⏳ 等待回答」而非「✅ 完成」。
+    // interventionNotify 关闭时保持旧行为（「✅ 完成」）且不消耗共享账本 ——
+    // 让「统一开关」名实相符：关闭后人工介入提醒的三条通道全部停用。
+    pendingQuestion: (session: SessionLike) => {
+      if (!current().interventionNotify) return null
+      const pending = findPendingQuestion(session.snapshotEvents() as unknown as readonly SessionEventLike[])
+      // 与投影兜底共用账本：无论哪条路径先处理，同一问题只提醒一次。
+      if (pending !== null) pendingNoticeDedup.test(`${session.id}:${pending.callId}`)
+      return pending
     },
     logger: ctx.logger,
   })
-  ctx.on('session/event', handler as (session: never, event: never) => void)
+
+  /** 会话事件统一分发：turn/start 记录回合状态、turn/end 结束通知、approval/asked 审批提醒。 */
+  ctx.on('session/event', ((session: SessionLike, event: SessionEventLike) => {
+    if (event.type === 'turn/start') {
+      runningTurns.set(session.id, true)
+      return
+    }
+    if (event.type === 'turn/end') {
+      runningTurns.set(session.id, false)
+      turnEndHandler(session, event)
+      return
+    }
+    handleApprovalAsked(session, event)
+  }) as (session: never, event: never) => void)
+
+  /**
+   * `user-questions/request`：模型每次调用 `ask_user_question` 必经（legacy 阻塞式
+   * 与 timed 首次发问都走它），此时工具在 `execute` 内挂起等待回答、回合不结束，
+   * 只靠 turn/end 永远收不到信号。
+   *
+   * **绝不可认领请求**：waterfall 语义是「返回值即认领」，本 listener 只旁观，
+   * 无论发生什么都必须 `next()` 交还给真正的答案器；自身异常一律吞掉。
+   */
+  ctx.on(
+    'user-questions/request' as never,
+    ((request: QuestionRequestLike, next: () => Promise<unknown>): Promise<unknown> => {
+      try {
+        // 开关判断放在记账之前：关闭期间的介入点不消耗 dedup，
+        // 重新开启后同一问题仍能提醒（与 turn/end 的既有约定一致）。
+        if (current().interventionNotify) {
+          const sessionId = request.agent?.session?.id
+          const key = request.wait?.callId ?? summarizeQuestions((request.questions ?? []).map(item => item.question ?? ''))
+          if (questionDedup.test(`${sessionId ?? 'global'}:${key}`)) {
+            pushIntervention(sessionId, questionIntent(request))
+          }
+        }
+      } catch (error: unknown) {
+        ctx.logger.warn(`[bark-notify] 提问提醒失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+      return next()
+    }) as never,
+  )
+
+  /**
+   * `userQuestions` 投影：timed 提问超时后工具以 `{pending:true}` 正常结果收尾，
+   * 回合照常结束。投影 `active[].state === 'continued'` 即「问题仍等你回答」；
+   * 此时立刻提醒一次（每 callId 一次），补上 turn/end 之外的持续等待信号。
+   *
+   * 投影由 dsh-user-questions 注册；本插件只订阅变更，不重复注册定义
+   * （同 key 重复注册虽会共享引用，但没必要）。服务缺席时 inject 回调不执行。
+   */
+  ctx.inject(['sessionProjections'], (scoped) => {
+    const registry = (scoped as unknown as {
+      sessionProjections?: {
+        onChanged?: (listener: (session: SessionLike, key: string, value: unknown, seq: unknown) => void) => () => void
+      }
+    }).sessionProjections
+    if (typeof registry?.onChanged !== 'function') return
+    registry.onChanged((session, key, value) => {
+      if (key !== 'userQuestions') return
+      try {
+        if (!current().interventionNotify) return
+        type ActiveQuestion = { callId?: string; state?: string; questions?: readonly { question?: string; header?: string }[] }
+        const view = value as { active?: readonly ActiveQuestion[] } | undefined
+        if (!Array.isArray(view?.active)) return
+        // 只在**回合已结束**时兜底：回合仍在跑时问题刚超时（open→continued），
+        // 此刻说「回合已结束」是失真文案，且回合收尾时 turn/end 会统一改写提醒。
+        // 真正属于本通道的场景是崩溃恢复后 repair 合成的 unknown-outcome 结果。
+        if (runningTurns.get(session.id) === true) return
+        for (const item of view.active as readonly ActiveQuestion[]) {
+          if (item.state !== 'continued') continue
+          const callId = item.callId ?? ''
+          // 与 turn/end 改写共用账本，避免同一问题连推两条。
+          if (!pendingNoticeDedup.test(`${session.id}:${callId}`)) continue
+          const questions = (item.questions ?? []).map(question => question.question ?? question.header ?? '')
+          pushIntervention(session.id, pendingQuestionIntent({ callId, questions }))
+        }
+      } catch (error: unknown) {
+        // 投影驱动在 session/event 的容错边界内，但本回调不应制造任何抛点。
+        ctx.logger.warn(`[bark-notify] 挂起提问提醒失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    })
+  })
 }

@@ -27,6 +27,15 @@ export interface BarkSettings {
     enabledSessions: string[];
     /** 通知正文展示上限（码点数，默认 200；仅正常完成时按「首段 + 末段」摘要，异常停止完整推送错误内容）。 */
     maxBodyChars: number;
+    /**
+     * 人工介入提醒开关（默认开）。
+     *
+     * 与 `enabledSessions`（按会话的「回合结束」开关）**相互独立**：需要人介入的
+     * 时刻（等待批准 / 模型提问 / timed 超时后仍待回答）往往发生在你正离开屏幕时，
+     * 而这类提醒的价值恰恰在于「无论这个会话开没开启回合通知，都别漏掉」。
+     * 关掉后只保留回合结束通知。
+     */
+    interventionNotify: boolean;
 }
 /** 组合默认值（全新安装的基线）。 */
 export declare const DEFAULT_SETTINGS: BarkSettings;
@@ -40,12 +49,14 @@ export declare const barkSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     group: z<string, string, "volatile-defined">;
     enabledSessions: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     maxBodyChars: z<number, number, "volatile-defined">;
+    interventionNotify: z<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     server: z<string, string, "volatile-defined">;
     key: z<string, string, "volatile-defined">;
     group: z<string, string, "volatile-defined">;
     enabledSessions: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     maxBodyChars: z<number, number, "volatile-defined">;
+    interventionNotify: z<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /** 浏览器可见的脱敏状态。 */
 export interface KeyMask {

@@ -42,7 +42,7 @@ const BODY_LIMIT = 64 * 1024
 export interface BarkRpcDeps {
   getSettings(): BarkSettings
   /** merge 写入（Host 侧；绝不整段替换，防浏览器脱敏视图清空密钥）。 */
-  updateSettings(patch: { server?: string; key?: string; group?: string; enabledSessions?: string[]; maxBodyChars?: number }): Promise<void>
+  updateSettings(patch: { server?: string; key?: string; group?: string; enabledSessions?: string[]; maxBodyChars?: number; interventionNotify?: boolean }): Promise<void>
   /** 翻转会话开关；返回最新状态与集合。 */
   toggleSession(sessionId: string): Promise<{ enabled: boolean; enabledSessions: string[] }>
   /** 当前工作区（默认 group 来源，可选）。 */
@@ -350,6 +350,7 @@ function handleState(deps: BarkRpcDeps, res: ServerResponse): void {
       group: settings.group,
       enabledSessions: settings.enabledSessions,
       maxBodyChars: settings.maxBodyChars,
+      interventionNotify: settings.interventionNotify,
     },
   })
 }
@@ -357,7 +358,7 @@ function handleState(deps: BarkRpcDeps, res: ServerResponse): void {
 /** POST /set */
 async function handleSet(deps: BarkRpcDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const patch = await readJson(req)
-  const next: { server?: string; key?: string; group?: string; maxBodyChars?: number } = {}
+  const next: { server?: string; key?: string; group?: string; maxBodyChars?: number; interventionNotify?: boolean } = {}
   if (patch.server !== undefined) {
     if (typeof patch.server !== 'string') {
       json(res, 400, { ok: false, message: 'set: server 必须是字符串' })
@@ -401,6 +402,13 @@ async function handleSet(deps: BarkRpcDeps, req: IncomingMessage, res: ServerRes
       return
     }
     next.maxBodyChars = rounded
+  }
+  if (patch.interventionNotify !== undefined) {
+    if (typeof patch.interventionNotify !== 'boolean') {
+      json(res, 400, { ok: false, message: 'set: interventionNotify 必须是布尔值' })
+      return
+    }
+    next.interventionNotify = patch.interventionNotify
   }
   if (Object.keys(next).length === 0) {
     json(res, 200, { ok: true, value: { saved: true, noop: true } })

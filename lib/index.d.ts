@@ -50,12 +50,14 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     group: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     enabledSessions: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     maxBodyChars: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    interventionNotify: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     server: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     key: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     group: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     enabledSessions: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     maxBodyChars: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    interventionNotify: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /**
  * 硬依赖：仅 settings（描述/更新 profile patch 中的本插件配置）。

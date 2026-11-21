@@ -183,3 +183,54 @@ test('handler：整包超限时拒发并告警（截断逻辑失效路径）', a
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(delivered.length, 1)
 })
+
+test('handler：回合正常完成但仍有 timed 提问挂起 → 改推「⏳ 等待回答」而不是「✅ 完成」', async () => {
+  const delivered = []
+  const handler = createTurnEndHandler({
+    isEnabled: () => true,
+    getConfig: () => ({ server: 'https://api.day.app', key: 'k', group: '' }),
+    deliver: async (payload) => { delivered.push(payload); return { ok: true, kind: 'success' } },
+    pendingQuestion: () => ({ callId: 'c1', questions: ['确认删除吗？'] }),
+  })
+  handler(fakeSession([assistantEvent('已处理完毕')]), turnEndEvent('completed'))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(delivered.length, 1)
+  assert.equal(delivered[0].title, '⏳ 等待回答')
+  assert.equal(delivered[0].level, 'timeSensitive')
+  assert.ok(delivered[0].body.includes('确认删除吗？'))
+})
+
+test('handler：pendingQuestion 返回 null 时保持「✅ 完成」；未注入该依赖时行为不变', async () => {
+  const delivered = []
+  const withNull = createTurnEndHandler({
+    isEnabled: () => true,
+    getConfig: () => ({ server: 'https://api.day.app', key: 'k', group: '' }),
+    deliver: async (payload) => { delivered.push(payload); return { ok: true, kind: 'success' } },
+    pendingQuestion: () => null,
+  })
+  withNull(fakeSession([assistantEvent('完成')]), turnEndEvent('completed'))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(delivered[0].title, '✅ 完成')
+
+  const legacy = createTurnEndHandler({
+    isEnabled: () => true,
+    getConfig: () => ({ server: 'https://api.day.app', key: 'k', group: '' }),
+    deliver: async (payload) => { delivered.push(payload); return { ok: true, kind: 'success' } },
+  })
+  legacy(fakeSession([assistantEvent('完成2')]), { type: 'turn/end', seq: 7, data: { turn: 7, reason: { kind: 'completed' } } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(delivered[1].title, '✅ 完成')
+})
+
+test('handler：pending 改写不影响异常停止分支（error 保持原意图）', async () => {
+  const delivered = []
+  const handler = createTurnEndHandler({
+    isEnabled: () => true,
+    getConfig: () => ({ server: 'https://api.day.app', key: 'k', group: '' }),
+    deliver: async (payload) => { delivered.push(payload); return { ok: true, kind: 'success' } },
+    pendingQuestion: () => ({ callId: 'c1', questions: ['Q'] }),
+  })
+  handler(fakeSession([]), turnEndEvent('error', { error: { message: 'boom', code: 'X' } }))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(delivered[0].title, '❌ 出错')
+})

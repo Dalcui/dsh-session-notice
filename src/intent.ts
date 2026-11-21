@@ -27,10 +27,17 @@ export interface TurnEndReasonLike {
   reason?: { kind?: string; reason?: string }
 }
 
+/**
+ * 推送意图的类型：6 种回合停止原因（turn/end 驱动）+ 3 种人工介入
+ * （intervention 驱动：等待批准 / 等待回答 / 回合已结束但问题未答）。
+ * 后三种由 intervention.ts 产出，见该模块头注释。
+ */
+export type NotificationKind = TurnEndKind | 'approval' | 'question' | 'pending-question'
+
 /** 一次已决定的推送意图。 */
 export interface NotificationIntent {
-  /** 停止类型。 */
-  kind: TurnEndKind
+  /** 停止类型（或人工介介入类型）。 */
+  kind: NotificationKind
   /** title：纯状态短语（≤80 字节，不放项目名）。 */
   title: string
   /** Bark level（服务端零校验，必须枚举化）。 */

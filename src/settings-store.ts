@@ -32,6 +32,15 @@ export interface BarkSettings {
   enabledSessions: string[]
   /** 通知正文展示上限（码点数，默认 200；仅正常完成时按「首段 + 末段」摘要，异常停止完整推送错误内容）。 */
   maxBodyChars: number
+  /**
+   * 人工介入提醒开关（默认开）。
+   *
+   * 与 `enabledSessions`（按会话的「回合结束」开关）**相互独立**：需要人介入的
+   * 时刻（等待批准 / 模型提问 / timed 超时后仍待回答）往往发生在你正离开屏幕时，
+   * 而这类提醒的价值恰恰在于「无论这个会话开没开启回合通知，都别漏掉」。
+   * 关掉后只保留回合结束通知。
+   */
+  interventionNotify: boolean
 }
 
 /** 组合默认值（全新安装的基线）。 */
@@ -41,6 +50,7 @@ export const DEFAULT_SETTINGS: BarkSettings = {
   group: '',
   enabledSessions: [],
   maxBodyChars: DEFAULT_BODY_CHARS,
+  interventionNotify: true,
 }
 
 /** settings schema：`key` 是 secret，`enabledSessions` 持久化会话开关。
@@ -53,6 +63,7 @@ export const barkSettingsSchema = z.object({
   group: z.string().default('').volatile(),
   enabledSessions: z.array(z.string()).default([]).volatile(),
   maxBodyChars: z.number().min(BODY_CHARS_MIN).max(BODY_CHARS_MAX).default(DEFAULT_BODY_CHARS).volatile(),
+  interventionNotify: z.boolean().default(true).volatile(),
 })
 
 /** 浏览器可见的脱敏状态。 */
