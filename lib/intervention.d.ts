@@ -104,6 +104,28 @@ export interface PendingQuestion {
     /** 题面（可能为空，取不到时退回通用文案）。 */
     questions: readonly string[];
 }
+/** 准入判定所需的最小设置形状。 */
+export interface InterventionGateSettings {
+    /** 已手动开启通知按钮的会话 id 集合（唯一主闸门）。 */
+    enabledSessions: readonly string[];
+    /** 人工介入提醒子开关（在已开启会话内生效）。 */
+    interventionNotify: boolean;
+    /** Bark 设备密钥（空 = 未配置，静默）。 */
+    key: string;
+}
+/**
+ * 是否允许为某个会话推送「人工介入提醒」。
+ *
+ * **会话级铃铛是唯一主闸门**：只有用户手动开启了该会话的通知按钮，才会为这个
+ * 会话推送任何 Bark 提醒（回合结束与人工介入一视同仁）。在此之上：
+ * - `interventionNotify` 是全局子开关（默认开），关掉只保留回合结束通知；
+ * - `key` 未配置时静默（与回合结束通知一致）；
+ * - `sessionId` 缺失时**判否**（无法确认该会话已开启，宁可不打扰）。
+ * @param settings - 当前设置。
+ * @param sessionId - 事件所属会话 id（可能缺失）。
+ * @returns 允许推送返回 true。
+ */
+export declare function allowsInterventionPush(settings: InterventionGateSettings, sessionId: string | undefined): boolean;
 /** 审批提醒意图（等待用户批准）。 */
 export declare function approvalIntent(event: ApprovalAskedLike): NotificationIntent;
 /** 把若干题面拼成一句可读摘要（最多 3 题，超出的以「等 N 题」收尾）。 */

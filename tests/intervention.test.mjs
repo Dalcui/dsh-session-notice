@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  allowsInterventionPush,
   approvalIntent,
   approvalPolicyOf,
   findPendingQuestion,
@@ -157,6 +158,25 @@ test('findPendingQuestion：无 pending / 空事件 → null；多个 pending �
   ])
   assert.equal(pending?.callId, 'c2')
   assert.deepEqual(pending?.questions, ['B'])
+})
+
+test('allowsInterventionPush：会话未开启通知按钮 → 一律不推（唯一主闸门）', () => {
+  const base = { enabledSessions: ['other'], interventionNotify: true, key: 'k' }
+  assert.equal(allowsInterventionPush(base, 'session-1'), false)
+  assert.equal(allowsInterventionPush({ ...base, enabledSessions: ['session-1'] }, 'session-1'), true)
+})
+
+test('allowsInterventionPush：会话已开启但子开关关闭 / key 未配置 → 不推', () => {
+  const on = { enabledSessions: ['s1'], interventionNotify: true, key: 'k' }
+  assert.equal(allowsInterventionPush({ ...on, interventionNotify: false }, 's1'), false)
+  assert.equal(allowsInterventionPush({ ...on, key: '' }, 's1'), false)
+  assert.equal(allowsInterventionPush({ ...on, key: '   ' }, 's1'), false)
+})
+
+test('allowsInterventionPush：sessionId 缺失 → 判否（无法确认已开启，宁可不打扰）', () => {
+  const on = { enabledSessions: ['s1'], interventionNotify: true, key: 'k' }
+  assert.equal(allowsInterventionPush(on, undefined), false)
+  assert.equal(allowsInterventionPush(on, ''), false)
 })
 
 test('approvalPolicyOf：默认 ask；最后一次 approval/policy 覆盖优先', () => {

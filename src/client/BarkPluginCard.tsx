@@ -35,7 +35,7 @@ interface SettingsView {
   group: string
   enabledSessions: string[]
   maxBodyChars: number
-  /** 人工介入提醒开关（默认开，独立于会话级「回合结束」开关）。 */
+  /** 人工介入提醒子开关（默认开；仅在会话头部已开启「会通知」的会话内生效）。 */
   interventionNotify: boolean
 }
 
@@ -393,10 +393,10 @@ export function BarkPluginCard({ rpc }: { rpc: RpcCall }): ReactElement {
                 disabled={saving || testing}
                 onChange={(event) => setInterventionNotify(event.target.checked)}
               />
-              <span>等待批准 / 模型提问 / 提问超时未答时也推送</span>
+              <span>已开启通知的会话，等待批准 / 模型提问 / 提问超时未答时也推送</span>
             </label>
             <p className="dsn-hint">
-              独立于会话头部的「会通知」开关：需要你介入时通常已离开屏幕，这类提醒对所有会话生效；关掉后只推送回合结束通知
+              仅在会话头部已开启「会通知」时生效：开启后，该会话遇到需要你介入的时刻也会推送；关掉则只推送回合结束通知
             </p>
           </div>
 

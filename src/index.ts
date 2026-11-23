@@ -50,6 +50,7 @@ import { isVolatile } from '@deepseek-ai/cosmokit'
 import { composePushPayload, sendPush } from './bark-service.js'
 import { createDedupLedger, createTurnEndHandler, type SessionLike } from './event-listener.js'
 import {
+  allowsInterventionPush,
   approvalIntent,
   approvalPolicyOf,
   findPendingQuestion,
@@ -215,15 +216,19 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
     }
   }
 
+  /** 该会话此刻是否允许推送人工介入提醒（会话铃铛为唯一主闸门，见 allowsInterventionPush）。 */
+  const canNotifyIntervention = (sessionId: string | undefined): boolean =>
+    allowsInterventionPush(current(), sessionId)
+
   /**
    * 人工介入提醒的统一出口（审批 / 提问 / timed 挂起）。
    *
-   * 与「回合结束通知」的区别（有意设计）：**不受 `enabledSessions` 约束**。
-   * 需要你介入时你通常已经离开屏幕，而这类提醒的全部价值就是「别漏掉」；
-   * 由独立的 `interventionNotify`（默认开）统一开关。key 未配置时静默。
+   * **与其他推送一致：只有用户手动开启了该会话的通知按钮，才会为这个会话推送。**
+   * 在此之上再由全局子开关 `interventionNotify`（默认开）决定是否包含这类提醒；
+   * 会话未开启、开关关闭、或 key 未配置时一律静默。
    */
   const pushIntervention = (sessionId: string | undefined, intent: NotificationIntent): void => {
-    if (!current().interventionNotify || current().key.trim().length === 0) return
+    if (!canNotifyIntervention(sessionId)) return
     const settings = current()
     const conf = {
       server: settings.server,
@@ -259,7 +264,8 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
   /** `approval/asked`：审批请求一经写入即提醒（之后才阻塞等批准，且无等待超时）。 */
   const handleApprovalAsked = (session: SessionLike, event: SessionEventLike): void => {
     if (event.type !== 'approval/asked') return
-    if (!current().interventionNotify) return
+    // 准入判定放在记账之前：会话未开启时重放同一事件也不会被账本吞掉。
+    if (!canNotifyIntervention(session.id)) return
     if (approvalPolicyOf(session.snapshotEvents() as unknown as readonly { type?: string; data?: { policy?: string } }[]) === 'never') return
     const id = event.data?.id ?? `seq:${event.seq ?? -1}`
     if (!approvalDedup.test(`${session.id}:${id}`)) return
@@ -271,10 +277,10 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
     getConfig: (session: SessionLike) => toConfig(current(), session.header?.cwd),
     deliver: (payload) => deliverPayload(payload),
     // 回合「正常完成」但仍有 timed 提问挂起时，改推「⏳ 等待回答」而非「✅ 完成」。
-    // interventionNotify 关闭时保持旧行为（「✅ 完成」）且不消耗共享账本 ——
-    // 让「统一开关」名实相符：关闭后人工介入提醒的三条通道全部停用。
+    // 该改写属「人工介入提醒」，因此同样要求会话已开启通知（外层 turn/end 的
+    // isEnabled 已保证）+ interventionNotify 开启；不满足时保持旧行为且不消耗账本。
     pendingQuestion: (session: SessionLike) => {
-      if (!current().interventionNotify) return null
+      if (!canNotifyIntervention(session.id)) return null
       const pending = findPendingQuestion(session.snapshotEvents() as unknown as readonly SessionEventLike[])
       // 与投影兜底共用账本：无论哪条路径先处理，同一问题只提醒一次。
       if (pending !== null) pendingNoticeDedup.test(`${session.id}:${pending.callId}`)
@@ -309,10 +315,11 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
     'user-questions/request' as never,
     ((request: QuestionRequestLike, next: () => Promise<unknown>): Promise<unknown> => {
       try {
-        // 开关判断放在记账之前：关闭期间的介入点不消耗 dedup，
-        // 重新开启后同一问题仍能提醒（与 turn/end 的既有约定一致）。
-        if (current().interventionNotify) {
-          const sessionId = request.agent?.session?.id
+        // 准入判定放在记账之前：会话未开启/开关关闭期间的介入点不消耗 dedup
+        // （与 turn/end 的既有约定一致）。sessionId 缺失时被判否 —— 无法确认
+        // 该会话已开启通知，宁可不打扰。
+        const sessionId = request.agent?.session?.id
+        if (canNotifyIntervention(sessionId)) {
           const key = request.wait?.callId ?? summarizeQuestions((request.questions ?? []).map(item => item.question ?? ''))
           if (questionDedup.test(`${sessionId ?? 'global'}:${key}`)) {
             pushIntervention(sessionId, questionIntent(request))
@@ -343,7 +350,7 @@ export function apply(ctx: Context, config: Partial<BarkSettings> = {}): void {
     registry.onChanged((session, key, value) => {
       if (key !== 'userQuestions') return
       try {
-        if (!current().interventionNotify) return
+        if (!canNotifyIntervention(session.id)) return
         type ActiveQuestion = { callId?: string; state?: string; questions?: readonly { question?: string; header?: string }[] }
         const view = value as { active?: readonly ActiveQuestion[] } | undefined
         if (!Array.isArray(view?.active)) return

@@ -189,7 +189,7 @@ test('sendPush：POST /push + JSON + device_key 小写 + 固定 UA + 超时', as
   assert.equal(calls.length, 1)
   const { init } = calls[0]
   assert.equal(init.headers['content-type'], 'application/json; charset=utf-8')
-  assert.equal(init.headers['user-agent'], 'dsh-bark-notify/0.3.0')
+  assert.equal(init.headers['user-agent'], 'dsh-bark-notify/0.3.1')
   const body = JSON.parse(init.body)
   assert.equal(body.device_key, 'k')
   assert.ok(!('deviceKey' in body))
